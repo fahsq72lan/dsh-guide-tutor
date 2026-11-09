@@ -3614,7 +3614,11 @@ export function apply(ctx, config = {}) {
       plan.items.sort((a, b) => (planMinutes(a.from) ?? 9999) - (planMinutes(b.from) ?? 9999))
       savePlanFile(plan)
       pushPlanState(plan)
-      return { ok: true, id, parsed: parsed || undefined, plan: planSummary(plan) }
+      // DSH 的工具返回值走 lossless JSON 序列化，值为 undefined 的键会让整个结果报
+      // "value is not lossless JSON"（虽然清单已经写盘）。parsed 不存在时干脆不放这个键。
+      const result = { ok: true, id, plan: planSummary(plan) }
+      if (parsed) result.parsed = parsed
+      return result
     }
     if (action === 'update') {
       const id = String(args.id || '')

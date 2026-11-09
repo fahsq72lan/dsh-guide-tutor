@@ -1510,3 +1510,26 @@ F04 已实现并合并为 v0.22.0，表要与代码状态一致；`6-已完成` 
 ### 怎么恢复
 
 - 删 10:20 开会、14:00 玩、19:30 调试插件三条，把「学日语五十音」的 `done` 改回 `false`，即回到原 2 条（08:30 学日语五十音 + 19:00 吃薯片喝奶茶）。
+
+## 2026-11-09 修 guide_plan add 返回值序列化失败（B32）
+
+### 改了什么
+
+- `index.js` add 分支末尾：`return { ok: true, id, parsed: parsed || undefined, plan: planSummary(plan) }` 改为先构造 `const result = { ok: true, id, plan: planSummary(plan) }`，只有 `parsed` 存在时才 `result.parsed = parsed`。
+- `package.json` 0.22.0 → 0.22.1。
+
+### 为什么
+
+用户实测 m01850：用 from/to/title 加任务（不带 text）时，工具返回 `Error: tool "guide_plan" returned invalid output: value is not lossless JSON`，但条目实际已写进 `plan.json`；模型以为失败重试，清单出现重复条目。
+根因：DSH 工具返回值走 lossless JSON 序列化，对象里值为 `undefined` 的键不合法；不带 text 时 `parsed` 为 `null`，`parsed: undefined` 这一项就是非法的。
+
+### 怎么验证
+
+- `node --check index.js` → `node syntax OK`；`index.js` 保持 LF、无 CRLF。
+- 改 profile 的 `cordis.patch.yml` 第 44 行触发热重载：`plugin.log` 21:43:19 `guide-tutor ready`，`overlay spawned pid=290652`。
+- `guide_plan add from=22:00 to=22:25 place=测试 title=测试：返回序列化` → 返回 6 条清单文本，无报错；`guide_plan remove id=tmw9baggb` 后回到 5 条。
+- `grep '\|\| undefined|\? undefined|: undefined'` 全文件只剩 1 处（4042 行 URL 参数），不在工具返回值里。
+
+### 怎么恢复
+
+- `git revert <本刀提交>`；或把 add 分支末尾改回 `parsed: parsed || undefined`，`package.json` 改回 0.22.0。
