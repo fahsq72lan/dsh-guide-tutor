@@ -1,0 +1,38 @@
+{
+    "name":  "@local/dsh-guide-tutor",
+    "version": "0.21.0",
+    "private":  true,
+    "type":  "module",
+    "description":  "Screen tutor: floating bubble, desktop capture, on-screen arrows/circles and a translucent step panel, plus a local step-file knowledge base.",
+    "exports":  {
+                    ".":  "./index.js",
+                    "./locale/*.json":  "./locale/*.json",
+                    "./icon":  "./icon.svg"
+                },
+    "files":  [
+                  "index.js",
+                  "cordis.patch.yml",
+                  "native/overlay.ps1",
+                  "native/asr.py",
+                  "native/capture.ps1",
+                  "native/cam.ps1",
+                  "native/idle.ps1",
+                  "native/tts.ps1",
+                  "native/docx_tool.py",
+                  "tools/probe-subtitle.cjs",
+                  "py/fetch_wheels.py",
+                  "py/download_model.py",
+                  "py/asr_selftest.py",
+                  "py/libs",
+                  "models",
+                  "locale/zh.json",
+                  "icon.svg",
+                  "locale/en.json",
+                  "README.md"
+              ],
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           }
+            }
+}

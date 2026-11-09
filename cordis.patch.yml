@@ -1,0 +1,5 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+- insert:
+    - id: guide-tutor
+      name: '@local/dsh-guide-tutor'
+# touch 2026-10-27 13:00 camera reload

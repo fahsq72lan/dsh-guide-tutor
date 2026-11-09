@@ -1,0 +1,15 @@
+# 运行时与二进制资产，不入库
+tmp/
+models/
+py/libs/
+py/wheels/
+kb-backup-*/
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# Office 锁文件、临时与日志
+~$*
+*.tmp
+*.log
