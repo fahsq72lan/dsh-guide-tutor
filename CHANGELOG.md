@@ -1441,3 +1441,30 @@ T03。拆完 video 后没有可重复的回归手段，今天手点只覆盖了 
 
 - 用 `tmp\打磨计划-before-t03-20261109.xlsx` 覆盖根目录文件，再把根目录复制回 `planning\`。
 - 只想撤单条：删 B18 那行并把 `BugList` ref 改回 `A3:K20`，其余单元格逐个改回原值（原值见备份）。
+
+## 2026-11-09 F04 自然语言加任务
+
+### 改了什么
+
+- 新增 `lib/plan-parse.js`（约 220 行）：`parsePlanText(text, now)` 把一句话解析成 `{ ok, from, to, place, title, date, dayOffset, missing }`。支持今天/明天/后天/大后天/周X/下周三/11月15日、上午/下午/晚上/凌晨、`HH:mm`、`X点X分`/半/一刻、`X分钟后`/`X小时后`、时长、地点（`在`/`去`）。
+- `index.js`：`guide_plan` 的 `add` 新增 `text` 参数；解析成功才落盘，失败返回 `need` 并在渲染里回显「（缺 from）」；不是今天的条目先写 `plan-later.json`，`planForToday()` 在当天首次读清单时自动并入并删除该条；一句话来的时间不做 25 分钟吸附，用户说几点就是几点。
+- 新增 `tools/smoke-plan.mjs`（13 条断言）。
+- `package.json` 0.21.2 → 0.22.0。
+
+### 为什么
+
+F04：把「想到一件事」到「写进清单」压成一句话；解析失败必须回显确认，不能静默写错时间。
+
+### 怎么验证
+
+- `node tools/smoke-plan.mjs` → `13 passed, 0 failed`，exit 0。
+- 热重载后实调：
+  - `guide_plan add text=明天下午三点在图书馆复习概率论` → 「2026-11-10 先记下了：15:00 @图书馆 复习概率论」，`plan-later.json` 结构正确；
+  - `guide_plan add text=今天下午五点半在宿舍背单词` → 当天 `17:30–17:55 @宿舍 背单词`；
+  - `guide_plan add text=复习概率论` → 「没成：这句话没解析出完整时间（缺 from）」，不落盘。
+- 测试后已恢复 `plan.json`（`tmp/plan-before-f04.json`）并删除 `plan-later.json`。
+
+### 怎么恢复
+
+- `git reset --hard v0.21.2` 或 `git revert <本刀提交>`。
+- 只撤功能：删 `lib/plan-parse.js`、`tools/smoke-plan.mjs`，把 `index.js` 的 add 分支恢复成 v0.21.2 版本；`plan-later.json` 可留可删。

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { createLogger } from './lib/log.js'
 import { createStateStore } from './lib/state.js'
 import { createVideoLibrary } from './lib/video.js'
+import { parsePlanText } from './lib/plan-parse.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NATIVE_DIR = path.join(HERE, 'native')
@@ -3166,6 +3167,7 @@ export function apply(ctx, config = {}) {
   const planStatePath = path.join(dataDir, 'plan-state.json')
   const planArchiveDir = path.join(dataDir, 'plan-archive')
   const planHistoryPath = path.join(dataDir, 'plan-history.json')
+  const planLaterPath = path.join(dataDir, 'plan-later.json')
 
   const PLAN_TONE = {
     strict: '严厉，短句，不容商量',
@@ -3313,19 +3315,62 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 不是今天的条目先存 plan-later.json，当天第一次读清单时并进来。
+  function readPlanLater() {
+    try {
+      const data = JSON.parse(fs.readFileSync(planLaterPath, 'utf8'))
+      return Array.isArray(data?.items) ? data.items : []
+    } catch {
+      return []
+    }
+  }
+
+  function writePlanLater(items) {
+    try {
+      fs.writeFileSync(planLaterPath, JSON.stringify({ items }, null, 2), 'utf8')
+    } catch (error) {
+      log(`plan later write failed: ${error?.message ?? error}`)
+    }
+  }
+
+  function takePlanLaterFor(date) {
+    const all = readPlanLater()
+    const usable = (item) => item?.date === date && String(item?.title || '').trim()
+    const mine = all.filter(usable)
+    if (!mine.length) return []
+    writePlanLater(all.filter((item) => !usable(item)))
+    return mine.map((item, index) => ({
+      id: String(item.id || `t${Date.now().toString(36)}${index}`),
+      from: String(item.from || ''),
+      to: String(item.to || ''),
+      place: String(item.place || ''),
+      title: String(item.title || '').slice(0, 40),
+      goalId: item.goalId ? String(item.goalId) : '',
+      done: false,
+      doneAt: null,
+      remindedAt: null,
+      nudgedAt: null,
+    }))
+  }
+
   // 跨天自动归旧：昨天的清单进 plan-archive/，今天重新开始。
   function planForToday(now = new Date()) {
     const today = todayKey(now)
     const plan = readPlanFile()
     if (plan.date && plan.date < today) {
       archivePlan(plan)
-      const fresh = { date: today, items: [] }
+      const fresh = { date: today, items: takePlanLaterFor(today) }
       savePlanFile(fresh)
       // 换天要立刻推给悬浮层，否则卡片还挂着昨天那几条（isToday 也会是错的）。
       try { pushPlanState(fresh) } catch (error) { log(`plan push after rollover failed: ${error?.message ?? error}`) }
       return fresh
     }
     if (!plan.date) plan.date = today
+    const carry = takePlanLaterFor(today)
+    if (carry.length) {
+      plan.items.push(...carry)
+      savePlanFile(plan)
+    }
     plan.items.sort((a, b) => (planMinutes(a.from) ?? 9999) - (planMinutes(b.from) ?? 9999))
     return plan
   }
@@ -3480,22 +3525,70 @@ export function apply(ctx, config = {}) {
   async function planRun(args = {}) {
     const action = String(args.action || 'list')
     if (action === 'add') {
-      const title = String(args.title || '').trim()
+      const text = String(args.text || '').trim()
+      let title = String(args.title || '').trim()
+      let fromArg = args.from
+      let toArg = args.to
+      let placeArg = args.place
+      let parsed = null
+      if (!title && text) {
+        parsed = parsePlanText(text)
+        title = parsed.title
+        if (!parsed.ok) {
+          return {
+            ok: false,
+            error: '这句话没解析出完整时间，先别写进清单',
+            need: parsed.missing,
+            parsed,
+          }
+        }
+        fromArg = fromArg || parsed.from
+        toArg = toArg || parsed.to
+        placeArg = placeArg || parsed.place
+      }
       if (!title) return { ok: false, error: 'title 不能为空' }
+      // 不是今天的事先记到 plan-later.json，当天第一次读清单时再并进来。
+      if (parsed && parsed.date !== todayKey(new Date())) {
+        const id = `f${Date.now().toString(36)}`
+        const items = readPlanLater()
+        items.push({
+          id,
+          date: parsed.date,
+          from: parsed.from,
+          to: parsed.to,
+          place: parsed.place,
+          title: title.slice(0, 40),
+          goalId: args.goalId ? String(args.goalId) : '',
+        })
+        writePlanLater(items)
+        appendDaylog('note', `清单记到 ${parsed.date}：${parsed.from || '随时'} ${title.slice(0, 20)}`)
+        return {
+          ok: true,
+          later: true,
+          date: parsed.date,
+          id,
+          plan: `${parsed.date} 先记下了：${parsed.from || '随时'}${parsed.place ? ` @${parsed.place}` : ''} ${title.slice(0, 40)}。当天打开清单会自动并入。`,
+        }
+      }
       // 番茄钟：把开始时间吸到最近的整点/半点，结束固定 +25 分钟，后 5 分钟休息。
-      const rawFrom = planMinutes(args.from)
+      // 一句话解析来的时间不吸附，用户说几点就是几点。
+      const rawFrom = planMinutes(fromArg)
       let slot = null
       if (rawFrom !== null) {
-        slot = Math.floor(rawFrom / 30) * 30
-        if (rawFrom - slot >= 25) slot += 30
-        // 时间轴画到 22:30（他一般十点半收工），再晚的条目会落在卡片外面，收进最后一格。
-        const planDayEnd = 22 * 60 + 30
-        if (slot >= planDayEnd) slot = 22 * 60
+        if (parsed) {
+          slot = rawFrom
+        } else {
+          slot = Math.floor(rawFrom / 30) * 30
+          if (rawFrom - slot >= 25) slot += 30
+          // 时间轴画到 22:30（他一般十点半收工），再晚的条目会落在卡片外面，收进最后一格。
+          const planDayEnd = 22 * 60 + 30
+          if (slot >= planDayEnd) slot = 22 * 60
+        }
       }
       const hhmm = (mins) => `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`
       // 显式给了 from+to 且跨度大于一个番茄钟（比如整节课 08:30–10:10），按真实区间存，
       // 不再强拗成 25 分钟——卡片的时间轴是按真实时长画的。
-      const rawTo = planMinutes(args.to)
+      const rawTo = planMinutes(toArg)
       // 只要用户/模型明确给了 from 和 to（to 在 from 之后），就按真实区间存，不再往番茄钟上拗；
       // 只给 from 才走"吸附到整点/半点 + 25 分钟"那套。卡片上的「＋」是手填时间，必须原样落。
       const explicitSpan = rawFrom !== null && rawTo !== null && rawTo > rawFrom
@@ -3510,7 +3603,7 @@ export function apply(ctx, config = {}) {
         id,
         from,
         to,
-        place: String(args.place || '').trim(),
+        place: String(placeArg || '').trim(),
         title: title.slice(0, 40),
         goalId: args.goalId ? String(args.goalId) : '',
         done: false,
@@ -3521,7 +3614,7 @@ export function apply(ctx, config = {}) {
       plan.items.sort((a, b) => (planMinutes(a.from) ?? 9999) - (planMinutes(b.from) ?? 9999))
       savePlanFile(plan)
       pushPlanState(plan)
-      return { ok: true, id, plan: planSummary(plan) }
+      return { ok: true, id, parsed: parsed || undefined, plan: planSummary(plan) }
     }
     if (action === 'update') {
       const id = String(args.id || '')
@@ -3598,7 +3691,7 @@ export function apply(ctx, config = {}) {
   const guidePlanTool = {
     name: 'guide_plan',
     description:
-      '「桌面清单」：把目标排成今天的清单（几点到几点、在哪、做什么），显示在桌面卡片上。list=看清单；add=加一条（from/to 用 HH:mm、place、title）；remove=划掉；done/undo=打勾；clear=清空；show/hide=显示或收起卡片；auto=拿目标和课表去排。',
+      '「桌面清单」：把目标排成今天的清单（几点到几点、在哪、做什么），显示在桌面卡片上。list=看清单；add=加一条（from/to 用 HH:mm、place、title，或直接给 text 一句话）；remove=划掉；done/undo=打勾；clear=清空；show/hide=显示或收起卡片；auto=拿目标和课表去排。',
     parameters: {
       type: 'object',
       properties: {
@@ -3606,6 +3699,7 @@ export function apply(ctx, config = {}) {
         id: { type: 'string', description: 'remove/done/undo：条目 id' },
         from: { type: 'string', description: 'add：开始时间 HH:mm' },
         to: { type: 'string', description: 'add：结束时间 HH:mm' },
+        text: { type: 'string', description: 'add：一句话加任务，如「明天下午三点在图书馆复习概率论」；解析成 from/to/place/title' },
         place: { type: 'string', description: 'add：地点，如 励志楼乙102 / 宿舍 / 实验室' },
         title: { type: 'string', description: 'add：做什么，≤18 字，具体到能动手' },
         goalId: { type: 'string', description: 'add：对应哪个目标（可选）' },
@@ -3617,7 +3711,10 @@ export function apply(ctx, config = {}) {
     output: {
       schema: { type: 'object', additionalProperties: true },
       render: (args, value) => {
-        if (value.error) return [{ type: 'text', text: `没成：${value.error}` }]
+        if (value.error) {
+          const need = Array.isArray(value.need) && value.need.length ? `（缺 ${value.need.join('、')}）` : ''
+          return [{ type: 'text', text: `没成：${value.error}${need}` }]
+        }
         if (value.hint) {
           return [{ type: 'text', text: `${value.hint}\n\n现在是 ${value.now}\n课表：${value.classes}\n\n当前清单：\n${value.plan}` }]
         }
