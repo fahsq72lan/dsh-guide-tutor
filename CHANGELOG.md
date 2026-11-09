@@ -1392,3 +1392,26 @@ T01 第三刀。video 是最大一块（网络请求 + WBI 签名 + 字幕解析
 - `git reset --hard v0.21.0`：回到拆分前的基线（含已拆的 log/state）。
 - 或 `git revert <本刀提交>`：删除 `lib/video.js`，把 index.js 的 video 内联段恢复；原代码可从 `v0.21.0` tag 取。
 - 只回退本刀：`git revert <本刀提交>` 后重新热重载。
+
+## 2026-11-09 T03 冒烟测试：video 模块
+
+### 改了什么
+
+- 新增 `tools/smoke-video.mjs`（约 260 行，16 个断言）：纯函数（`parseVideoUrl` / `videoStamp` / `parseDurationText` / `subtitleFitsVideo` / `videoDigest`）、库 CRUD（save → list → note → show → transcript → forget）、`video_learn` 三条分支（正常 / 时间轴不符 / 无字幕）、`video_search`。
+- `lib/video.js`：`createVideoLibrary` 增加可选参数 `fetchImpl`（默认 `globalThis.fetch`），`biliApi` 与字幕下载改用它；返回值增加 `saveVideoRecord`、`parseVideoUrl`、`parseDurationText`、`videoStamp`、`subtitleFitsVideo`、`videoDigest`，供冒烟脚本直接调用。`index.js` 调用处不变。
+- `package.json` version 0.21.1 → 0.21.2。
+
+### 为什么
+
+T03。拆完 video 后没有可重复的回归手段，今天手点只覆盖了 4 个只读工具，`learn` / `search` / `forget` 都没实跑。冒烟脚本用 fetch 桩、临时目录，几秒跑完，提交前可重复。
+
+### 怎么验证
+
+- `node tools/smoke-video.mjs` → `16 passed, 0 failed`，exit 0。
+- 热重载 21:22:14 `disposed` → `ready`，`overlay ready (pid 283980)`，无报错。
+- 运行时 `video_list` 仍返回 8 条。
+
+### 怎么恢复
+
+- `git reset --hard v0.21.1`（丢弃本刀），或 `git revert <本刀提交>`。
+- 只撤测试：删除 `tools/smoke-video.mjs`；`lib/video.js` 的 `fetchImpl` 与测试出口可以保留（默认行为不变），也可以一并回退。
