@@ -1558,3 +1558,25 @@ F04 已实现并合并为 v0.22.0，表要与代码状态一致；`6-已完成` 
 ### 怎么恢复
 
 - 删掉 `Update-CardScrollThumb` 函数、`$script:CardScrollThumb` / `$script:ScrollDragStart` 两个变量，以及 `$script:CardScroll = $sv` 之后到 `$stack.Children.Add($thumb)` 的整段（含 `$sv.Padding` 那行）；即回到只有滚轮、无滑块的旧行为。
+
+## 2026-11-09 打磨表记录 F30 清单滚动滑块
+
+### 改了什么
+
+- `D:\dsh_TestSpace\guide-tutor\打磨计划-2026-11.xlsx` 与 `planning\打磨计划-2026-11.xlsx`：
+  - `1-想法池` 第 33 行写入 F30（桌面清单 / 功能 / 清单右侧滚动位置滑块 / 中 / P2 / S / 进行中 / 用户口述 m01924）。
+  - Excel Table `IdeaPool` 的 ref 由 `A3:K32` 扩到 `A3:K33`。
+  - `7-想法收件箱` 第 8 行（序号 5）写入 m01924 原话、理解、`功能`、`已做`。
+
+### 为什么
+
+AGENTS.md 要求「新想法、新功能都进表」；这条是用户口述的需求，代码已提交，但还没人工确认，所以状态先记「进行中」。
+
+### 怎么验证
+
+- openpyxl 读回：`1-想法池` 第 33 行 11 列齐全，`IdeaPool` ref = `A3:K33`；`7-想法收件箱` 第 8 行 6 列齐全。
+- 根目录与 `planning\` 两份都已保存。
+
+### 怎么恢复
+
+- 删掉 `1-想法池` 第 33 行、把 `IdeaPool` ref 改回 `A3:K32`；清空 `7-想法收件箱` 第 8 行。两份文件同样处理。
