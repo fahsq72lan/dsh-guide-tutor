@@ -1342,3 +1342,29 @@ T01 第二刀，同时落 T05 的「state.json 写入口收敛」。行为先保
 ### 怎么恢复
 
 - 删 `lib/state.js`；把 `index.js` 里三个薄包装换回原来的函数体（原实现见本条上方描述，或从 CHANGELOG 2026-11-09 之前版本找回），恢复 `let state = null`；删掉 import 与 `store` 初始化块。
+
+## 2026-11-09 建立 git 版本管理（v0.21.0 基线）
+
+### 改了什么
+
+- `git init -b main`，本地身份 `user.name=<User>`、`user.email=wutian@local`（未改全局配置）。
+- 新增 `.gitignore`：排除 `tmp/`、`models/`、`py/libs/`、`py/wheels/`、`kb-backup-*/`、`__pycache__/`、`*.pyc`、`~$*`、`*.tmp`、`*.log`。
+- 新增 `.gitattributes`：`* -text`，按工作区字节原样存储，不做 CRLF 转换。
+- 新增 `VERSIONING.md`：分支、提交格式、一刀流程、回滚命令、版本号规则、不入库清单。
+- 首次提交 `0a096d4`：31 个文件、12,847 行；tag `v0.21.0` 指向该提交（含已拆好的 `lib/log.js`、`lib/state.js`）。
+
+### 为什么
+
+拆 `index.js` 要连续动多个文件，之前没有回滚点，CHANGELOG 里的「怎么恢复」只能靠手写描述。先有 `git reset --hard v0.21.0`，才敢继续拆第三刀。
+
+### 怎么验证
+
+- `git log --oneline --decorate -1` 输出 `0a096d4 (HEAD -> main, tag: v0.21.0) ...`。
+- `git status --short` 为空（工作区干净）；`git tag` 有 `v0.21.0`。
+- `git ls-files | Measure-Object` 为 31；`native/__pycache__`、`models/`、`py/libs/` 均未入库。
+
+### 怎么恢复
+
+- 回到基线：`git reset --hard v0.21.0`（丢弃之后所有提交）。
+- 彻底放弃版本管理：删除 `D:\dsh_TestSpace\guide-tutor\.git` 目录即可，工作区文件不受影响，但历史与 tag 一并丢失。
+- 误提交大文件时：`git rm --cached <路径>` 后补 `.gitignore`，再 `git commit --amend` 或新提交。
