@@ -1533,3 +1533,28 @@ F04 已实现并合并为 v0.22.0，表要与代码状态一致；`6-已完成` 
 ### 怎么恢复
 
 - `git revert <本刀提交>`；或把 add 分支末尾改回 `parsed: parsed || undefined`，`package.json` 改回 0.22.0。
+
+## 2026-11-09 今日清单加右侧滚动滑块
+
+### 改了什么
+
+- `native/overlay.ps1`：
+  - 新增 `$script:CardScrollThumb`、`$script:ScrollDragStart` 两个脚本级变量（`$script:CardWidth` 之后）。
+  - 新增 `Update-CardScrollThumb`：按 `ViewportHeight / ExtentHeight` 算滑块长度（最小 26px），按 `VerticalOffset / ScrollableHeight` 算位置；内容装得下时 `Collapsed`。
+  - 卡片第 2 行的 `ScrollViewer` 右侧叠一个 5px 宽 `Border` 滑块：圆角 2.5、`rgba(255,255,255,46)`、`Cursor=Hand`、ToolTip「拖动查看清单」；`$sv.Padding` 右侧留 10px，避免滑块压住文字。
+  - 绑定 `ScrollChanged` 刷新滑块；滑块支持按住拖动（`CaptureMouse`，位移换算成 `ScrollToVerticalOffset`），松手释放。
+- `package.json` 0.22.1 → 0.22.2。
+
+### 为什么
+
+用户 m01924：「打磨一下今日清单的细节：给右边的空白区域加入一个类似我图片滑块的东西用来展示在页面的什么位置」。原来 `VerticalScrollBarVisibility = Hidden`，滚轮能滚但看不出滚到哪、还有多少。
+
+### 怎么验证
+
+- `Parser::ParseFile` → `PS parse OK`；文件首字节 `EF BB BF`。
+- `guide_overlay restart` → `restarted: true`，pid 295336，`overlay.log` 21:53:30 `overlay started`，无异常。
+- 待人工：收缩态清单右侧出现细滑块；滚轮时滑块跟着走；按住滑块拖动，清单内容跟随。
+
+### 怎么恢复
+
+- 删掉 `Update-CardScrollThumb` 函数、`$script:CardScrollThumb` / `$script:ScrollDragStart` 两个变量，以及 `$script:CardScroll = $sv` 之后到 `$stack.Children.Add($thumb)` 的整段（含 `$sv.Padding` 那行）；即回到只有滚轮、无滑块的旧行为。

@@ -2808,10 +2808,40 @@ function New-SubtitleWindow {
 # 让它看起来像桌面的一部分。点 ☐ 发 plan_done，拖标题栏发 card_moved，点 ✕ 发 card_close。
 # 版式：贴右缘、满屏高；正文是按小时排的时间轴（06:00–24:00），没安排的小时留空。
 $script:CardWidth = 360
+$script:CardScrollThumb = $null
+$script:ScrollDragStart = $null
 $script:CardAlpha = 235
 $script:DayStartHour = 6
 $script:DayEndHour = 22
 $script:DayEndMinute = 30
+
+function Update-CardScrollThumb {
+    try {
+        $sv = $script:CardScroll
+        $thumb = $script:CardScrollThumb
+        if ($null -eq $sv -or $null -eq $thumb) { return }
+        $h = [double]$sv.ActualHeight
+        $extent = [double]$sv.ExtentHeight
+        $viewport = [double]$sv.ViewportHeight
+        # 内容装得下就不显示滑块；装不下时按视口/总高的比例算滑块长度。
+        if ($h -lt 10 -or $extent -le $viewport + 0.5) {
+            $thumb.Visibility = [System.Windows.Visibility]::Collapsed
+            return
+        }
+        $thumb.Visibility = [System.Windows.Visibility]::Visible
+        $ratio = $viewport / $extent
+        if ($ratio -gt 1) { $ratio = 1 }
+        $th = [math]::Max(26.0, $h * $ratio)
+        if ($th -gt $h) { $th = $h }
+        $scrollable = [double]$sv.ScrollableHeight
+        $top = 0.0
+        if ($scrollable -gt 0) {
+            $top = ($h - $th) * ([double]$sv.VerticalOffset / $scrollable)
+        }
+        $thumb.Height = $th
+        $thumb.Margin = [System.Windows.Thickness]::new(0, $top, 2, 0)
+    } catch { }
+}
 
 function New-CardWindow {
     $window = [System.Windows.Window]::new()
@@ -2976,6 +3006,53 @@ function New-CardWindow {
     [System.Windows.Controls.Grid]::SetRow($sv, 2)
     [void]$stack.Children.Add($sv)
     $script:CardScroll = $sv
+
+    # 右侧滚动指示滑块：内容超出视口时按比例显示，可拖动。
+    $sv.Padding = [System.Windows.Thickness]::new(0, 0, 10, 0)
+    $thumb = [System.Windows.Controls.Border]::new()
+    $thumb.Width = 5
+    $thumb.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $thumb.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+    $thumb.CornerRadius = [System.Windows.CornerRadius]::new(2.5)
+    $thumb.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(46, 255, 255, 255))
+    $thumb.Cursor = [System.Windows.Input.Cursors]::Hand
+    $thumb.ToolTip = '拖动查看清单'
+    $thumb.Visibility = [System.Windows.Visibility]::Collapsed
+    $thumb.Add_MouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+        [void]$s.CaptureMouse()
+        $sv = $script:CardScroll
+        if ($null -ne $sv) {
+            $script:ScrollDragStart = @{ y = $e.GetPosition($sv).Y; offset = [double]$sv.VerticalOffset }
+        }
+    })
+    $thumb.Add_MouseMove({
+        param($s, $e)
+        if (-not $s.IsMouseCaptured -or $null -eq $script:ScrollDragStart) { return }
+        $sv = $script:CardScroll
+        if ($null -eq $sv) { return }
+        $h = [double]$sv.ActualHeight
+        $range = $h - [double]$s.Height
+        if ($range -le 1) { return }
+        $dy = $e.GetPosition($sv).Y - $script:ScrollDragStart.y
+        $target = $script:ScrollDragStart.offset + ($dy / $range) * [double]$sv.ScrollableHeight
+        if ($target -lt 0) { $target = 0 }
+        if ($target -gt $sv.ScrollableHeight) { $target = $sv.ScrollableHeight }
+        $sv.ScrollToVerticalOffset($target)
+    })
+    $thumb.Add_MouseLeftButtonUp({
+        param($s, $e)
+        if ($s.IsMouseCaptured) { [void]$s.ReleaseMouseCapture() }
+        $script:ScrollDragStart = $null
+    })
+    $sv.Add_ScrollChanged({
+        param($s, $e)
+        Update-CardScrollThumb
+    })
+    $script:CardScrollThumb = $thumb
+    [System.Windows.Controls.Grid]::SetRow($thumb, 2)
+    [void]$stack.Children.Add($thumb)
 
     # 底部「く」：点一下在「收缩」和「全展开」之间切换。
     $foot = [System.Windows.Controls.Grid]::new()
