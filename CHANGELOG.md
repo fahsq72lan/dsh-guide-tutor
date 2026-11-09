@@ -1368,3 +1368,27 @@ T01 第二刀，同时落 T05 的「state.json 写入口收敛」。行为先保
 - 回到基线：`git reset --hard v0.21.0`（丢弃之后所有提交）。
 - 彻底放弃版本管理：删除 `D:\dsh_TestSpace\guide-tutor\.git` 目录即可，工作区文件不受影响，但历史与 tag 一并丢失。
 - 误提交大文件时：`git rm --cached <路径>` 后补 `.gitignore`，再 `git commit --amend` 或新提交。
+
+## 2026-11-09 拆 T01 第三刀：video 抽成 lib/video.js
+
+### 改了什么
+
+- 新增 `lib/video.js`（28,799 B，约 714 行）：`createVideoLibrary({ dataDir, log, broadcast, config })` → `{ tools, readVideoRecords, videoDir }`。搬入 `parseVideoUrl`、`biliApi`、WBI 签名、字幕抓取/校验、视频库 JSON/Markdown 读写，以及 9 个 `video_*` 工具定义。
+- `index.js`：删除原 3656–4369 的 video 段，换成 `videoLibrary` + `videoTools` 三行初始化；`statusSnapshot` 的 `readVideoRecords()` 改 `videoLibrary.readVideoRecords()`；9 条 `ctx.tools.register(videoXTool)` 合并成 `for (const tool of videoTools) ctx.effect(...)`；import 增加 `createVideoLibrary`，删掉搬走后不再使用的 `createHash`。4,920 → 4,204 行（-716）。
+- `package.json` version 0.21.0 → 0.21.1。
+
+### 为什么
+
+T01 第三刀。video 是最大一块（网络请求 + WBI 签名 + 字幕解析 + 库读写），收进独立模块后，T03 冒烟测试可以直接 `import` 它，不必启动整个插件。
+
+### 怎么验证
+
+- `node --check index.js`、`node --check lib/video.js` 均通过。
+- 热重载 21:16:09 `disposed` → `ready`，`overlay ready (pid 270372)`，plugin.log 无报错。
+- 实调 4 个工具：`video_list` 返回 8 条；`video_show BV18XcEzXEGL` 正常；`video_recall 指令 宿命` 命中 2 条；`video_transcript` 返回 0~28 条 / 共 232 条、`nextOffset=28`。
+
+### 怎么恢复
+
+- `git reset --hard v0.21.0`：回到拆分前的基线（含已拆的 log/state）。
+- 或 `git revert <本刀提交>`：删除 `lib/video.js`，把 index.js 的 video 内联段恢复；原代码可从 `v0.21.0` tag 取。
+- 只回退本刀：`git revert <本刀提交>` 后重新热重载。
