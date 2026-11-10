@@ -2236,6 +2236,15 @@ export function apply(ctx, config = {}) {
   const setPlanItemDone = (id, done) => plan.setDone(id, done)
   const planHistoryData = (days) => plan.history(days)
 
+  const chatLogPath = path.join(dataDir, 'chatlog.json')
+  let chatLog = []
+  try {
+    const loaded = JSON.parse(fs.readFileSync(chatLogPath, 'utf8'))
+    if (Array.isArray(loaded)) chatLog = loaded
+  } catch {
+    chatLog = []
+  }
+
   function recordChat(role, via, text) {
     const value = String(text || '').trim()
     if (!value) return

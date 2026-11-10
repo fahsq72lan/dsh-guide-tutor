@@ -1800,3 +1800,20 @@ T01 八刀拆完（log/state/video/kb/focus/camera/edict/plan），`index.js` 4,
 ### 怎么恢复
 - 表：`tmp\打磨计划-before-t01-root.xlsx`、`tmp\打磨计划-before-t01-planning.xlsx` 覆盖回去。
 - HANDOFF：`git checkout v0.22.9 -- HANDOFF.md`。
+
+## 2026-11-10 10:25 修第八刀后 chatLog 作用域
+
+### 改了什么
+- `lib/plan.js`：删掉误搬入的 `// chatlog` 初始化段（`chatLogPath`、`chatLog` 读取）。
+- `index.js`：在 `recordChat` 前补回 `chatLogPath` / `chatLog` 初始化（约 9 行）。
+
+### 为什么
+拆 plan 段时截取范围把 `// chatlog` 段一起带进模块，`recordChat` 留在 index.js 却引用不到 `chatLog`，`guide_say` 报 `chatLog is not defined`。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/plan.js` 通过。
+- 重载：`plugin.log` 02:15:07.427 `disposed` → 02:15:07.616 `ready`。
+- `guide_say` 正常朗读；`http://127.0.0.1:41999/chatlog?limit=2` 返回 200、`count=120`。
+
+### 怎么恢复
+- `git revert <本次提交>`。
