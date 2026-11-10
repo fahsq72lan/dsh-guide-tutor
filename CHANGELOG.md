@@ -1876,3 +1876,18 @@ F05 原本把备注、颜色、子任务捆在一起。备注与颜色成本低�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.12 -- native/overlay.ps1`。
+
+## 2026-11-10 11:43 修编辑窗口打不开：Tag2 不是 WPF 属性
+
+### 改了什么
+- `native/overlay.ps1`：自绘优先级块不再把颜色塞进 `$chip.Tag2`（`Border` 没有这个属性，赋值直接抛异常，整个 `Show-AddTaskWindow` 中止）；改为 `$script:AddFrmPriColors` 哈希表按 `Tag` 取色，`$priPaint` 从哈希表读。
+
+### 为什么
+用户点「✎」后窗口完全不出现。`overlay.log` 11:39:00 / 11:39:06 三次 `edit task window failed: 在此对象上找不到属性“Tag2”。请确认该属性存在并且可设置。`
+
+### 怎么验证
+- `PS parse OK`；BOM `EF BB BF`、无 CRLF；`guide_overlay restart` 成功。
+- 再点「✎」应正常弹出「改这条任务」，窗口内五个优先级小块可见。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.13 -- native/overlay.ps1`（注意 v0.22.13 本身带这个 bug）。

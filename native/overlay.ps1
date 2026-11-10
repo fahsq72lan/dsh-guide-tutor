@@ -2589,6 +2589,7 @@ function Show-AddTaskWindow {
     $priBox.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
     $script:AddFrmPriValue = [string]$initPri
     $script:AddFrmPriBtns = @()
+    $script:AddFrmPriColors = @{}
     $priDefs = @(
         @{ v = ''; t = '不设'; c = [System.Windows.Media.Color]::FromArgb(150, 255, 255, 255) },
         @{ v = 'P0'; t = 'P0'; c = [System.Windows.Media.Color]::FromArgb(230, 229, 72, 77) },
@@ -2598,7 +2599,7 @@ function Show-AddTaskWindow {
     )
     $priPaint = {
         param($chip, $on)
-        $cc = [System.Windows.Media.Color]$chip.Tag2
+        $cc = [System.Windows.Media.Color]$script:AddFrmPriColors[[string]$chip.Tag]
         if ($on) {
             $chip.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(70, $cc.R, $cc.G, $cc.B))
             $chip.BorderBrush = [System.Windows.Media.SolidColorBrush]::new($cc)
@@ -2617,7 +2618,7 @@ function Show-AddTaskWindow {
         $chip.BorderThickness = [System.Windows.Thickness]::new(1)
         $chip.Cursor = [System.Windows.Input.Cursors]::Hand
         $chip.Tag = [string]$d.v
-        $chip.Tag2 = $d.c
+        $script:AddFrmPriColors[[string]$d.v] = $d.c
         $chipText = [System.Windows.Controls.TextBlock]::new()
         $chipText.Text = [string]$d.t
         $chipText.FontSize = 11
