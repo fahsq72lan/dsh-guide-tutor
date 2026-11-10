@@ -1748,3 +1748,20 @@ T01：摄像头巡检与清单、语音、目标互不共享写状态，依赖�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.7 -- index.js lib/camera.js`。
+
+## 2026-11-10 10:30 T01 第七刀：拆出 lib/edict.js
+
+### 改了什么
+- 新增 `lib/edict.js`（约 300 行）：`createEdict({ dataDir, readGoals, readTimetable, minutesOf, hhmm, todayKey, log, broadcast, appendDaylog, pickAgent, buildUserMessage })`，返回 `{ tool, tick, run, config, configPath }`；`edict-state.json` / `directives.jsonl` / `edict.json` 路径与调度状态都搬入。
+- `index.js`：删原 edict 段 295 行（保留 `goalsPath` / `readGoals`，因为清单与 HTTP 状态还要用），改 `import { createEdict }`、`const edict = createEdict(...)`、`const guideDirectiveTool = edict.tool`；tick 改 `edict.tick()`；`tone` 事件改 `edict.config()` / `edict.configPath`；`planToneText` 改 `edict.config().tone`。3,743 → 3,461 行。
+
+### 为什么
+T01：「都市指令」的调度、发令、回报自成一套，只依赖目标读取与课表文本，拆出后可单独调用 `status/goals/list` 验证。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/edict.js` 通过，无残留 `readEdictConfig`/`edictStatePath` 引用。
+- 重载：`plugin.log` 02:11:13.710 `disposed` → 02:11:13.908 `ready`。
+- 实调 `guide_directive`：status「调度关；今天已发 2 条；下一条约 20:35；目标 2 条」；goals 返回两条原有目标。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.8 -- index.js lib/edict.js`。
