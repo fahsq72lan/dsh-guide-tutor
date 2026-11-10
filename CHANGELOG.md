@@ -1666,3 +1666,19 @@ B01/B02 随 v0.22.4 落地并已用 API 实测；B03 的 11-09 清单已随换�
 
 ### 怎么恢复
 - `git checkout -- 打磨计划-2026-11.xlsx planning/打磨计划-2026-11.xlsx`（回到 c479efc 的表状态）。
+
+## 2026-11-10 10:03 加 dev-watch 热重载（B05）
+
+### 改了什么
+- 新增 `scripts/dev-watch.mjs`（约 85 行）：监听 `index.js` 与 `lib/*.js`，700ms 防抖后把 `cordis.patch.yml` 的 `reload:` 行改成当前时间，再轮询 `plugin.log` 等 `disposed → ready` 并打印耗时。
+- `package.json`：加 `"scripts": { "dev": "node scripts/dev-watch.mjs" }`，版本 0.22.4 → 0.22.5。
+
+### 为什么
+B05：改 index.js 要手动改 reload 文本、再猜有没有生效；现在保存即触发，跑完打印「重载完成（xxx ms）」。
+
+### 怎么验证
+- `node scripts/dev-watch.mjs` 后 touch `lib/log.js`：输出 `变更：lib\log.js`、`已触发`、`重载完成（309ms）`。
+- `cordis.patch.yml` 的 reload 行变成 `2026-11-10 ... dev-watch`；`plugin.log` 出现 `disposed` → `ready`。
+
+### 怎么恢复
+- 删 `scripts/dev-watch.mjs`，去掉 package.json 的 scripts 段即可；不影响插件运行。
