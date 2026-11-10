@@ -1765,3 +1765,21 @@ T01：「都市指令」的调度、发令、回报自成一套，只依赖目�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.8 -- index.js lib/edict.js`。
+
+## 2026-11-10 10:16 T01 第八刀：拆出 lib/plan.js
+
+### 改了什么
+- 新增 `lib/plan.js`（721 行）：`createPlan({ dataDir, parsePlanText, readGoals, readTimetable, minutesOf, hhmm, todayKey, appendDaylog, log, writeState, currentState, broadcast, pickAgent, buildUserMessage, mutedSpeakMessages, speak })`，返回 `{ tool, run, tick, forToday, summary, push, history, setDone }`；`plan.json` / `plan-state.json` / `plan-archive/` / `plan-history.json` / `plan-later.json` / `plan-deleted.json` 的读写全部搬入。
+- `index.js`：删原 plan 段 638 行，改 `import { createPlan }`、`const plan = createPlan(...)`、`const guidePlanTool = plan.tool`，并保留 8 个薄包装（`planForToday` / `planRun` / `planTick` / `planSummary` / `pushPlanState` / `setPlanItemDone` / `planHistoryData`）。3,461 → 2,798 行。
+- 第一版漏注入了 `currentState`，`guide_plan list` 报 `currentState is not defined`；补参数后重载通过。
+
+### 为什么
+T01：清单是插件里最大的一块业务逻辑（自然语言加任务、软删除恢复、换天归档、提醒 tick），拆出后 `index.js` 只剩装配与注册，清单问题可单文件定位。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/plan.js` 通过。
+- 重载：`plugin.log` 02:13:06.472 `disposed` → 02:13:06.663 `ready`。
+- 实调 `guide_plan`：list 返回 3 条今日清单；add 文本「今天下午六点在宿舍测试计划模块」→ 18:00–18:25 落盘；done 打勾成功；remove 软删除成功；restore 恢复成功；再 remove 清理测试条目。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.9 -- index.js lib/plan.js`。
