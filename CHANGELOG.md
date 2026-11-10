@@ -1714,3 +1714,20 @@ T01（拆分 index.js）：知识库逻辑与宿主其余部分无共享可变�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.5 -- index.js lib/kb.js`。
+
+## 2026-11-10 10:18 T01 第五刀：拆出 lib/focus.js
+
+### 改了什么
+- 新增 `lib/focus.js`（约 250 行）：`createFocus({ dataDir, nativeDir, log, speak, readTimetable, minutesOf, hhmm })`，返回 `{ tool, tick, run, statusText }`；`focus.json` / `focus-log.jsonl` / `idle.ps1` 路径与状态迁移都搬进去。
+- `index.js`：删原 focus 段 265 行，改 `import { createFocus }`、`const focus = createFocus(...)`、`const guideFocusTool = focus.tool`；tick 调用改 `focus.tick(new Date())`；语音用注入的 `speak`（内部仍走 `speechChunks`/`stopSpeech`/`speechQueue`/`playNextChunk`）。4,332 → 4,084 行。
+
+### 为什么
+T01：专注环是纯本地定时器，只依赖目录、日志、语音和课表，拆出来后可单独测 `run/tick`，不再和宿主闭包纠缠。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/focus.js` 通过。
+- 重载：`plugin.log` 02:09:14.874 `disposed` → 02:09:15.069 `ready`。
+- 实调 `guide_focus`：status「专注环没开。」；start（5 分工作/1 分休息/2 分提醒/10:30 结束）返回「第 1 轮 · 工作…」且正常朗读；stop 返回「已停。」。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.6 -- index.js lib/focus.js`。
