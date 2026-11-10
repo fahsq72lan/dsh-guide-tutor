@@ -456,6 +456,37 @@ export function apply(ctx, config = {}) {
         }
         break
       }
+      case 'template_save': {
+        try {
+          const saved = planRun({ action: 'template_save', name: String(event.name || '') })
+          log('template save from card -> ' + (saved?.error || saved?.name))
+        } catch (error) {
+          log('template save failed: ' + (error?.message || error))
+        }
+        break
+      }
+      case 'template_apply': {
+        try {
+          const applied = planRun({
+            action: 'template_apply',
+            name: String(event.name || ''),
+            dayOffset: Number(event.dayOffset || 0),
+          })
+          log('template apply from card -> ' + (applied?.error || applied?.date))
+        } catch (error) {
+          log('template apply failed: ' + (error?.message || error))
+        }
+        break
+      }
+      case 'template_remove': {
+        try {
+          const removedTemplate = planRun({ action: 'template_remove', name: String(event.name || '') })
+          log('template remove from card -> ' + (removedTemplate?.error || removedTemplate?.name))
+        } catch (error) {
+          log('template remove failed: ' + (error?.message || error))
+        }
+        break
+      }
       case 'tone': {
         const tone = String(event.tone || '')
         if (!tone) break

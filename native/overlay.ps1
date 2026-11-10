@@ -3069,6 +3069,19 @@ function New-CardWindow {
         try { Show-AddTaskWindow } catch { Write-Log ('add task window failed: ' + $_.Exception.Message) }
     })
     [void]$headBtns.Children.Add($plus)
+    $tplBtn = [System.Windows.Controls.TextBlock]::new()
+    $tplBtn.Text = '模板'
+    $tplBtn.FontSize = 10.5
+    $tplBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
+    $tplBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $tplBtn.ToolTip = '清单模板：把某一天存下来，铺到明天/后天'
+    $tplBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    $tplBtn.Add_PreviewMouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+        try { Show-TemplatesWindow } catch { Write-Log ('templates window failed: ' + $_.Exception.Message) }
+    })
+    [void]$headBtns.Children.Add($tplBtn)
     $gear = [System.Windows.Controls.TextBlock]::new()
     $gear.Text = '⚙'
     $gear.FontSize = 14
@@ -3729,6 +3742,288 @@ function Clear-OldShots {
     }
     Write-Log ('shot cleanup: removed ' + $removed)
     return $removed
+}
+
+function Read-TemplatesFile {
+    $path = Join-Path $DataDir 'plan-templates.json'
+    if (-not (Test-Path -LiteralPath $path)) { return @() }
+    try {
+        $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+        $obj = $raw | ConvertFrom-Json
+        if ($null -eq $obj -or $null -eq $obj.templates) { return @() }
+        $out = @()
+        foreach ($prop in $obj.templates.PSObject.Properties) {
+            $items = @($prop.Value.items)
+            $out += [pscustomobject]@{
+                Name = [string]$prop.Name
+                Count = [int]$items.Count
+                SavedAt = [string]$prop.Value.savedAt
+                Date = [string]$prop.Value.date
+            }
+        }
+        return @($out | Sort-Object SavedAt -Descending)
+    } catch {
+        Write-Log ('templates read failed: ' + $_.Exception.Message)
+        return @()
+    }
+}
+
+function Show-TemplatesWindow {
+    if ($null -ne $script:TemplatesWindow -and $script:TemplatesWindow.IsVisible) {
+        $script:TemplatesWindow.Activate()
+        return
+    }
+
+    $win = [System.Windows.Window]::new()
+    $win.Title = '教学助手 · 清单模板'
+    $win.Width = 520
+    $win.Height = [math]::Min(620, [math]::Max(400, $script:WorkHeight - 140))
+    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $win.Topmost = $true
+    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
+    $win.FontFamily = 'Microsoft YaHei'
+    $script:TemplatesWindow = $win
+    $script:TplDeleteArmed = $null
+
+    $grid = [System.Windows.Controls.Grid]::new()
+    $grid.Margin = [System.Windows.Thickness]::new(16, 14, 16, 14)
+    foreach ($h in @('Auto', 'Auto', '*', 'Auto')) {
+        $rd = [System.Windows.Controls.RowDefinition]::new()
+        if ($h -eq '*') { $rd.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }
+        else { $rd.Height = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto) }
+        [void]$grid.RowDefinitions.Add($rd)
+    }
+    $win.Content = $grid
+
+    $head = [System.Windows.Controls.Grid]::new()
+    $h1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $h2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$head.ColumnDefinitions.Add($h1)
+    [void]$head.ColumnDefinitions.Add($h2)
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $title.Text = '清单模板'
+    $title.FontSize = 17
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $title.Foreground = [System.Windows.Media.Brushes]::White
+    [void]$head.Children.Add($title)
+    $sub = [System.Windows.Controls.TextBlock]::new()
+    $sub.Text = '把某一天的清单存下来，铺到今天 / 明天 / 后天'
+    $sub.FontSize = 11
+    $sub.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $sub.Margin = [System.Windows.Thickness]::new(10, 2, 0, 0)
+    $sub.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 255, 255))
+    [System.Windows.Controls.Grid]::SetColumn($sub, 1)
+    [void]$head.Children.Add($sub)
+    [System.Windows.Controls.Grid]::SetRow($head, 0)
+    [void]$grid.Children.Add($head)
+
+    $hint = [System.Windows.Controls.TextBlock]::new()
+    $hint.Text = '「铺到」会直接把模板写进那一天的清单；明天/后天的条目到当天第一次打开清单时出现。'
+    $hint.FontSize = 10.5
+    $hint.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    $hint.Margin = [System.Windows.Thickness]::new(0, 8, 0, 10)
+    $hint.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(130, 255, 255, 255))
+    [System.Windows.Controls.Grid]::SetRow($hint, 1)
+    [void]$grid.Children.Add($hint)
+
+    $script:TemplateListStack = [System.Windows.Controls.StackPanel]::new()
+    $scroll = [System.Windows.Controls.ScrollViewer]::new()
+    $scroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+    $scroll.Padding = [System.Windows.Thickness]::new(0, 0, 4, 0)
+    $scroll.Content = $script:TemplateListStack
+    [System.Windows.Controls.Grid]::SetRow($scroll, 2)
+    [void]$grid.Children.Add($scroll)
+
+    $refresh = {
+        $stack = $script:TemplateListStack
+        if ($null -eq $stack) { return }
+        $stack.Children.Clear()
+        $tpls = @(Read-TemplatesFile)
+        if (-not $tpls.Count) {
+            $empty = [System.Windows.Controls.TextBlock]::new()
+            $empty.Text = '还没有模板。在下面输入名字，点「把今天存为模板」；明天要用时，一键铺过去。'
+            $empty.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $empty.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+            $empty.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 255, 255, 255))
+            [void]$stack.Children.Add($empty)
+            return
+        }
+        foreach ($tpl in $tpls) {
+            $row = [System.Windows.Controls.Border]::new()
+            $row.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 28, 33, 41))
+            $row.CornerRadius = [System.Windows.CornerRadius]::new(8)
+            $row.Padding = [System.Windows.Thickness]::new(12, 9, 12, 9)
+            $row.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
+
+            $rg = [System.Windows.Controls.Grid]::new()
+            $c0 = [System.Windows.Controls.ColumnDefinition]::new()
+            $c0.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            $c1 = [System.Windows.Controls.ColumnDefinition]::new()
+            $c1.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+            $c2 = [System.Windows.Controls.ColumnDefinition]::new()
+            $c2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+            [void]$rg.ColumnDefinitions.Add($c0)
+            [void]$rg.ColumnDefinitions.Add($c1)
+            [void]$rg.ColumnDefinitions.Add($c2)
+
+            $ts = [System.Windows.Controls.StackPanel]::new()
+            $nameTb = [System.Windows.Controls.TextBlock]::new()
+            $nameTb.Text = [string]$tpl.Name
+            $nameTb.FontSize = 13
+            $nameTb.FontWeight = [System.Windows.FontWeights]::SemiBold
+            $nameTb.Foreground = [System.Windows.Media.Brushes]::White
+            $nameTb.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+            [void]$ts.Children.Add($nameTb)
+            $metaTb = [System.Windows.Controls.TextBlock]::new()
+            $savedDay = [string]$tpl.SavedAt
+            if ($savedDay.Length -ge 10) { $savedDay = $savedDay.Substring(0, 10) }
+            $metaTb.Text = ('{0} 条 · 存于 {1}' -f $tpl.Count, $savedDay)
+            $metaTb.FontSize = 10.5
+            $metaTb.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+            $metaTb.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(135, 255, 255, 255))
+            [void]$ts.Children.Add($metaTb)
+            [System.Windows.Controls.Grid]::SetColumn($ts, 0)
+            [void]$rg.Children.Add($ts)
+
+            $apply = [System.Windows.Controls.Button]::new()
+            $apply.Content = '铺到 ▾'
+            $apply.FontSize = 11
+            $apply.Padding = [System.Windows.Thickness]::new(10, 4, 10, 4)
+            $apply.Margin = [System.Windows.Thickness]::new(8, 0, 6, 0)
+            $apply.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $apply.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 46, 52, 62))
+            $apply.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 226, 233, 242))
+            $apply.BorderThickness = [System.Windows.Thickness]::new(0)
+            $apply.Cursor = [System.Windows.Input.Cursors]::Hand
+            $apply.Tag = [string]$tpl.Name
+            $apply.Add_Click({
+                param($s, $e)
+                $name = [string]$s.Tag
+                $menu = [System.Windows.Controls.ContextMenu]::new()
+                foreach ($opt in @(@('今天', 0), @('明天', 1), @('后天', 2))) {
+                    $mi = [System.Windows.Controls.MenuItem]::new()
+                    $mi.Header = ('铺到' + $opt[0])
+                    $mi.Tag = @{ Name = $name; Offset = [int]$opt[1] }
+                    $mi.Add_Click({
+                        param($m, $ev)
+                        $t = $m.Tag
+                        Send-OverlayEvent @{ type = 'template_apply'; name = [string]$t.Name; dayOffset = [int]$t.Offset }
+                        Start-Sleep -Milliseconds 300
+                        & $script:RefreshTemplates
+                    })
+                    [void]$menu.Items.Add($mi)
+                }
+                $menu.PlacementTarget = $s
+                $menu.Placement = [System.Windows.Controls.Primitives.PlacementMode]::Bottom
+                $menu.IsOpen = $true
+            })
+            [System.Windows.Controls.Grid]::SetColumn($apply, 1)
+            [void]$rg.Children.Add($apply)
+
+            $del = [System.Windows.Controls.TextBlock]::new()
+            $del.Text = '×'
+            $del.FontSize = 14
+            $del.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $del.Cursor = [System.Windows.Input.Cursors]::Hand
+            $del.ToolTip = '删除这个模板（点两次确认）'
+            $del.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 255, 255))
+            $del.Tag = [string]$tpl.Name
+            $del.Add_PreviewMouseLeftButtonDown({
+                param($s, $e)
+                $e.Handled = $true
+                $name = [string]$s.Tag
+                $now = [DateTime]::UtcNow
+                $armed = $script:TplDeleteArmed
+                if ($null -ne $armed -and $armed.Name -eq $name -and ($now - $armed.At).TotalSeconds -lt 2.5) {
+                    $script:TplDeleteArmed = $null
+                    Send-OverlayEvent @{ type = 'template_remove'; name = $name }
+                    Start-Sleep -Milliseconds 300
+                    & $script:RefreshTemplates
+                } else {
+                    $script:TplDeleteArmed = @{ Name = $name; At = $now }
+                    $s.Text = '确认删'
+                    $s.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 248, 113, 113))
+                }
+            })
+            [System.Windows.Controls.Grid]::SetColumn($del, 2)
+            [void]$rg.Children.Add($del)
+
+            $row.Child = $rg
+            [void]$stack.Children.Add($row)
+        }
+    }
+    $script:RefreshTemplates = $refresh
+    & $refresh
+
+    $foot = [System.Windows.Controls.Grid]::new()
+    $foot.Margin = [System.Windows.Thickness]::new(0, 10, 0, 0)
+    $f0 = [System.Windows.Controls.ColumnDefinition]::new()
+    $f0.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $f1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $f1.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $f2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $f2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$foot.ColumnDefinitions.Add($f0)
+    [void]$foot.ColumnDefinitions.Add($f1)
+    [void]$foot.ColumnDefinitions.Add($f2)
+    $script:TplNameBox = [System.Windows.Controls.TextBox]::new()
+    $script:TplNameBox.FontSize = 12
+    $script:TplNameBox.Height = 30
+    $script:TplNameBox.Padding = [System.Windows.Thickness]::new(8, 3, 8, 3)
+    $script:TplNameBox.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 30, 35, 44))
+    $script:TplNameBox.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 232, 238, 246))
+    $script:TplNameBox.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(60, 255, 255, 255))
+    $script:TplNameBox.BorderThickness = [System.Windows.Thickness]::new(1)
+    $script:TplNameBox.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Center
+    $script:TplNameBox.ToolTip = '给模板起个名字，比如「晚间」「周末」'
+    [System.Windows.Controls.Grid]::SetColumn($script:TplNameBox, 0)
+    [void]$foot.Children.Add($script:TplNameBox)
+    $saveBtn = [System.Windows.Controls.Button]::new()
+    $saveBtn.Content = '把今天存为模板'
+    $saveBtn.FontSize = 11.5
+    $saveBtn.Padding = [System.Windows.Thickness]::new(12, 5, 12, 5)
+    $saveBtn.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    $saveBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 59, 130, 246))
+    $saveBtn.Foreground = [System.Windows.Media.Brushes]::White
+    $saveBtn.BorderThickness = [System.Windows.Thickness]::new(0)
+    $saveBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $saveBtn.Add_Click({
+        $name = ([string]$script:TplNameBox.Text).Trim()
+        if (-not $name) {
+            $script:TplNameBox.ToolTip = '先给模板起个名字'
+            return
+        }
+        Send-OverlayEvent @{ type = 'template_save'; name = $name }
+        Start-Sleep -Milliseconds 300
+        $script:TplNameBox.Text = ''
+        & $script:RefreshTemplates
+    })
+    [System.Windows.Controls.Grid]::SetColumn($saveBtn, 1)
+    [void]$foot.Children.Add($saveBtn)
+    $close = [System.Windows.Controls.Button]::new()
+    $close.Content = '关闭'
+    $close.FontSize = 11.5
+    $close.Padding = [System.Windows.Thickness]::new(12, 5, 12, 5)
+    $close.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    $close.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 46, 52, 62))
+    $close.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 226, 233, 242))
+    $close.BorderThickness = [System.Windows.Thickness]::new(0)
+    $close.Cursor = [System.Windows.Input.Cursors]::Hand
+    $close.Add_Click({ try { $script:TemplatesWindow.Close() } catch { } })
+    [System.Windows.Controls.Grid]::SetColumn($close, 2)
+    [void]$foot.Children.Add($close)
+    [System.Windows.Controls.Grid]::SetRow($foot, 3)
+    [void]$grid.Children.Add($foot)
+
+    $win.Add_Closed({
+        $script:TemplatesWindow = $null
+        $script:TemplateListStack = $null
+        $script:RefreshTemplates = $null
+        $script:TplNameBox = $null
+    })
+    $win.Show()
 }
 
 function Show-SettingsWindow {

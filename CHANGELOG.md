@@ -1945,3 +1945,22 @@ F03：课表之外的固定习惯（背单词、跑步、复盘）不用每天�
 
 ### 怎么恢复
 - `git revert`；删掉 `%USERPROFILE%\.dsh\guide-tutor\plan-repeats.json`、`plan-templates.json` 即回到无重复任务状态。
+
+## 2026-11-10 12:25 清单模板改为独立窗口，可铺到指定日期（F03 续）
+
+### 改了什么
+- `lib/plan.js`：`template_save` 支持 `dayOffset`/`date`，可把某一天（今天/未来/归档）的清单存成模板，模板记录 `date`；`template_apply` 支持 `dayOffset`/`date`：当天直接并入，未来写入 `plan-later.json`，到那天第一次打开时出现；`takePlanLaterFor` 补回 `note`/`priority`/`repeat`/`repeatRuleId`（之前从 later 并入时丢字段）；新增 `dayKeyWithOffset`、`itemsForDate`；schema 加 `dayOffset`/`date`。
+- `native/overlay.ps1`：卡片标题栏加「模板」入口；新增 `Show-TemplatesWindow`（约 230 行）：列出模板（名称、条数、保存日期），每行「铺到 ▾」可选今天/明天/后天，× 两次点击删除；底部输入名字「把今天存为模板」。读取 `plan-templates.json` 的 `Read-TemplatesFile`。
+- `index.js`：处理 `template_save`/`template_apply`/`template_remove` 三种卡片事件。
+
+### 为什么
+用户 m04333：模板应该是「把清单某一天保存成模板」，并有一个界面展示、能在界面里设置铺到明天/后天。
+
+### 怎么验证
+- `node --check lib/plan.js`、`node --check index.js`、`PS parse OK`、BOM/LF 正常。
+- 单元实验 `tmp/test_tpl.mjs`：save 记录 date=2026-11-10；apply dayOffset=1 返回 date=2026-11-11 并写 plan-later。
+- 实机：点卡片「模板」打开窗口；「铺到 ▾ → 明天」写入 4 条 2026-11-11；输入名字点「把今天存为模板」新增一条；两次点 × 删除。
+- 测试模板与 later 测试数据已清理。
+
+### 怎么恢复
+- `git revert`；`plan-templates.json` 与 `plan-later.json` 不受版本控制，删除/清空即可回到旧行为。
