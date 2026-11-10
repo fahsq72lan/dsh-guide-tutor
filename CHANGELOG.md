@@ -1842,3 +1842,21 @@ F05 原本把备注、颜色、子任务捆在一起。备注与颜色成本低�
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.10 -- lib/plan.js native/overlay.ps1`。
 - 表：`tmp\打磨计划-before-f05a-root.xlsx` / `-planning.xlsx` 覆盖回去。
+
+## 2026-11-10 11:36 F05a 修正：色条下移、默认灰色、窗口内可设
+
+### 改了什么
+- `native/overlay.ps1` 卡片条目的优先级色条：从「左侧 3px 竖条」改为「底部 3px 横条」，不再压住第一列文字；未设优先级的条目显示浅灰条（alpha 60），不再只有个别条目有线。
+- `Show-AddTaskWindow`（约 +45 行）：新增「备注」输入框与「优先级」下拉框（不设 / P0 最高 / P1 高 / P2 中 / P3 低），编辑态按条目现有值预填；保存时把 `note`、`priority` 一并发给 `plan_add` / `plan_update`。
+
+### 为什么
+用户 m03785 反馈三点：色条挡字；只有 08:30 那条有线；用户自己没有办法给任务设线条。
+
+### 怎么验证
+- `PS parse OK`；BOM `EF BB BF`、无 CRLF；`guide_overlay restart` 成功。
+- 截屏确认 08:30 条目底部是黄色横条，文字不再被盖。
+- 编辑窗口的备注框与优先级下拉需要人工点「✎」确认（自动化点不到）。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.11 -- native/overlay.ps1`。
+- 表：`tmp\打磨计划-before-f05a2-root.xlsx` / `-planning.xlsx` 覆盖回去。

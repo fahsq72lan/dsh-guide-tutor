@@ -2515,11 +2515,15 @@ function Show-AddTaskWindow {
     $editing = $null -ne $EditItem
     $initPlace = ''
     $initTitle = ''
+    $initNote = ''
+    $initPri = ''
     if ($editing) {
         if (-not [string]::IsNullOrWhiteSpace([string]$EditItem.from)) { $fromText = [string]$EditItem.from }
         if (-not [string]::IsNullOrWhiteSpace([string]$EditItem.to)) { $toText = [string]$EditItem.to }
         $initPlace = [string]$EditItem.place
         $initTitle = [string]$EditItem.title
+        $initNote = [string]$EditItem.note
+        $initPri = [string]$EditItem.priority
     }
     if (-not $editing -and -not [string]::IsNullOrWhiteSpace([string]$PrefillTitle)) { $initTitle = [string]$PrefillTitle }
 
@@ -2561,12 +2565,48 @@ function Show-AddTaskWindow {
     [void]$stack.Children.Add($fPlace.Row)
     $fTitle = New-AddField '做什么' $initTitle '写具体能动手的事，不超过 18 字'
     [void]$stack.Children.Add($fTitle.Row)
+    $fNote = New-AddField '备注' $initNote '例如 带电脑、水杯（可留空）'
+    [void]$stack.Children.Add($fNote.Row)
+
+    $priRow = [System.Windows.Controls.Grid]::new()
+    $priRow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 9)
+    $pc0 = [System.Windows.Controls.ColumnDefinition]::new()
+    $pc0.Width = [System.Windows.GridLength]::new(52, [System.Windows.GridUnitType]::Pixel)
+    $pc1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $pc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    [void]$priRow.ColumnDefinitions.Add($pc0)
+    [void]$priRow.ColumnDefinitions.Add($pc1)
+    $priName = [System.Windows.Controls.TextBlock]::new()
+    $priName.Text = '优先级'
+    $priName.FontSize = 12
+    $priName.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $priName.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    [System.Windows.Controls.Grid]::SetColumn($priName, 0)
+    [void]$priRow.Children.Add($priName)
+    $priBox = [System.Windows.Controls.ComboBox]::new()
+    $priBox.ItemsSource = @('不设', 'P0 最高', 'P1 高', 'P2 中', 'P3 低')
+    $priBox.SelectedIndex = 0
+    if ($initPri -eq 'P0') { $priBox.SelectedIndex = 1 }
+    elseif ($initPri -eq 'P1') { $priBox.SelectedIndex = 2 }
+    elseif ($initPri -eq 'P2') { $priBox.SelectedIndex = 3 }
+    elseif ($initPri -eq 'P3') { $priBox.SelectedIndex = 4 }
+    $priBox.FontSize = 12
+    $priBox.Height = 26
+    $priBox.Padding = [System.Windows.Thickness]::new(6, 2, 6, 2)
+    $priBox.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 32, 36, 44))
+    $priBox.Foreground = [System.Windows.Media.Brushes]::White
+    $priBox.ToolTip = 'P0 最急，P3 最低；颜色显示在卡片底部'
+    [System.Windows.Controls.Grid]::SetColumn($priBox, 1)
+    [void]$priRow.Children.Add($priBox)
+    [void]$stack.Children.Add($priRow)
 
     # WPF 事件委托执行时局部变量可能已经出栈，统一存到 $script: 里给 handler 用。
     $script:AddFrmFrom = $fFrom.Box
     $script:AddFrmTo = $fTo.Box
     $script:AddFrmPlace = $fPlace.Box
     $script:AddFrmTitle = $fTitle.Box
+    $script:AddFrmNote = $fNote.Box
+    $script:AddFrmPri = $priBox
 
     $err = [System.Windows.Controls.TextBlock]::new()
     $err.FontSize = 11
@@ -2601,6 +2641,9 @@ function Show-AddTaskWindow {
             $from = ([string]$script:AddFrmFrom.Text).Trim()
             $to = ([string]$script:AddFrmTo.Text).Trim()
             $place = ([string]$script:AddFrmPlace.Text).Trim()
+            $note = ([string]$script:AddFrmNote.Text).Trim()
+            $priIndex = [int]$script:AddFrmPri.SelectedIndex
+            $pri = @('', 'P0', 'P1', 'P2', 'P3')[$priIndex]
             $bad = $null
             if ($title -eq '') { $bad = '做什么不能空着。' }
             elseif ($from -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { $bad = '开始时间要写成 HH:mm，例如 14:00。' }
@@ -2613,11 +2656,11 @@ function Show-AddTaskWindow {
                 return
             }
             if ($script:AddFrmEditId -ne '') {
-                Send-OverlayEvent @{ type = 'plan_update'; id = $script:AddFrmEditId; from = $from; to = $to; place = $place; title = $title }
-                Write-Log ('task update sent: ' + $script:AddFrmEditId + ' ' + $from + '-' + $to + ' ' + $title)
+                Send-OverlayEvent @{ type = 'plan_update'; id = $script:AddFrmEditId; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri }
+                Write-Log ('task update sent: ' + $script:AddFrmEditId + ' ' + $from + '-' + $to + ' ' + $title + ' ' + $pri)
             } else {
-                Send-OverlayEvent @{ type = 'plan_add'; from = $from; to = $to; place = $place; title = $title }
-                Write-Log ('add task sent: ' + $from + '-' + $to + ' ' + $title)
+                Send-OverlayEvent @{ type = 'plan_add'; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri }
+                Write-Log ('add task sent: ' + $from + '-' + $to + ' ' + $title + ' ' + $pri)
             }
             if ($null -ne $script:AddTaskWindow) { $script:AddTaskWindow.Close() }
         }
@@ -3368,25 +3411,25 @@ function Update-Card($state) {
                 $mark += 30
             }
         }
-        # F05：优先级色条（P0 红 / P1 橙 / P2 蓝 / P3 绿），没填就不画。
+        # F05：优先级色条放块底部，横着一条，不压文字。
+        # 没设优先级也给一条浅灰，表示"普通"，免得用户以为功能只在个别条目上生效。
         $prioColor = $null
         switch ([string]$item.priority) {
             'P0' { $prioColor = [System.Windows.Media.Color]::FromArgb(230, 229, 72, 77) }
             'P1' { $prioColor = [System.Windows.Media.Color]::FromArgb(230, 245, 165, 36) }
             'P2' { $prioColor = [System.Windows.Media.Color]::FromArgb(210, 76, 141, 255) }
             'P3' { $prioColor = [System.Windows.Media.Color]::FromArgb(210, 48, 164, 108) }
+            default { $prioColor = [System.Windows.Media.Color]::FromArgb(60, 255, 255, 255) }
         }
-        if ($null -ne $prioColor) {
-            $bar = [System.Windows.Controls.Border]::new()
-            $bar.Width = 3
-            $bar.CornerRadius = [System.Windows.CornerRadius]::new(1.5)
-            $bar.Background = [System.Windows.Media.SolidColorBrush]::new($prioColor)
-            $bar.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
-            $bar.VerticalAlignment = [System.Windows.VerticalAlignment]::Stretch
-            $bar.Margin = [System.Windows.Thickness]::new(0, 3, 0, 3)
-            $bar.IsHitTestVisible = $false
-            [void]$inner.Children.Add($bar)
-        }
+        $bar = [System.Windows.Controls.Border]::new()
+        $bar.Height = 3
+        $bar.CornerRadius = [System.Windows.CornerRadius]::new(1.5)
+        $bar.Background = [System.Windows.Media.SolidColorBrush]::new($prioColor)
+        $bar.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+        $bar.VerticalAlignment = [System.Windows.VerticalAlignment]::Bottom
+        $bar.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
+        $bar.IsHitTestVisible = $false
+        [void]$inner.Children.Add($bar)
         $body.Child = $inner
 
         $body.Add_MouseLeftButtonUp([System.Windows.Input.MouseButtonEventHandler]$checkHandler)
