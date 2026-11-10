@@ -3241,34 +3241,11 @@ function Finish-CardDrag {
     $script:CardDragDropFrom = '{0:00}:{1:00}' -f [math]::Floor($from / 60), ($from % 60)
     $script:CardDragDropTo = '{0:00}:{1:00}' -f [math]::Floor($to / 60), ($to % 60)
     $script:CardDragDropItem = $item
-    # 一条动画走完「滑到新行 → 压扁回弹」，中间不换动画对象，避免切段时跳回基准值。
-    $move = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragTranslate.Y, $dropOffset, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(230)))
-    $ease = [System.Windows.Media.Animation.CubicEase]::new()
-    $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
-    $move.EasingFunction = $ease
-    $move.Add_Completed({
-        $s = $script:CardDragScale
-        if ($null -ne $s) {
-            $sq = [System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames]::new()
-            $q1 = [System.Windows.Media.Animation.EasingDoubleKeyFrame]::new(0.92, [System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(140)))
-            $eIn = [System.Windows.Media.Animation.CubicEase]::new()
-            $eIn.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseIn
-            $q1.EasingFunction = $eIn
-            [void]$sq.KeyFrames.Add($q1)
-            $q2 = [System.Windows.Media.Animation.EasingDoubleKeyFrame]::new(1.0, [System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(330)))
-            $eBack = [System.Windows.Media.Animation.BackEase]::new()
-            $eBack.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
-            $eBack.Amplitude = 0.35
-            $q2.EasingFunction = $eBack
-            [void]$sq.KeyFrames.Add($q2)
-            $sq.Add_Completed({ Complete-CardDragDrop })
-            $s.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $sq)
-        } else {
-            Complete-CardDragDrop
-        }
-    })
-    $script:CardDragTranslate.BeginAnimation([System.Windows.Media.TranslateTransform]::YProperty, $move)
+    # 动画不在这里演：把「松手时的视觉位置」交给重建后的新条目，由它滑到自己的真实布局位置。
+    # 这样动画终点就是最终排版位置，演完不会再有第二跳。
+    $script:CardDropHint = @{ id = $itemId; fromY = $visualY }
     Write-Log ('drag land: from=' + [int]$visualY + ' target=' + [int]$targetY + ' min=' + [int]$from)
+    Complete-CardDragDrop
 }
 
 
@@ -3620,6 +3597,7 @@ function Update-Card($state) {
 
     # 每轮清空条目索引：删掉的/改过的不会留旧对象。
     $script:CardItemsById = @{}
+    $script:CardBodyById = @{}
     $alpha = $script:CardAlpha
     if ($null -ne $card.opacity) {
         $a = [double]$card.opacity
@@ -3728,6 +3706,7 @@ function Update-Card($state) {
         $itemId = [string]$item.id
         $body.Tag = $itemId
         $script:CardItemsById[$itemId] = $item
+        $script:CardBodyById[$itemId] = $body
         $checkHandler = {
             # 刚刚是拖动（松手改时间），别再当成打勾。
             if ($script:CardDragMoved) { return }
@@ -4053,6 +4032,49 @@ function Update-Card($state) {
     }
 
     if (-not $script:CardWindow.IsVisible) { $script:CardWindow.Show() }
+
+    # 拖拽刚落下：新条目从松手位置滑到自己的真实布局位置（终点就是布局位置，演完不会跳）。
+    $dropHint = $script:CardDropHint
+    $script:CardDropHint = $null
+    if ($null -ne $dropHint) {
+        $hb = $script:CardBodyById[[string]$dropHint.id]
+        if ($null -ne $hb -and $null -ne $script:CardDragLayer) {
+            try {
+                $script:CardItems.UpdateLayout()
+                $ny = $hb.TranslatePoint([System.Windows.Point]::new(0, 0), $script:CardDragLayer).Y
+                $dy = [double]$dropHint.fromY - $ny
+                # 落点与松手位置重合时，从上方 8px 落下来，保留「放下」的观感；
+                # 动画终点仍是布局位置，所以演完不会跳。
+                if ([math]::Abs($dy) -lt 1.0) { $dy = -8.0 }
+                $tt = [System.Windows.Media.TranslateTransform]::new(0.0, $dy)
+                $hb.RenderTransformOrigin = [System.Windows.Point]::new(0.5, 0.5)
+                $an = [System.Windows.Media.Animation.DoubleAnimation]::new($dy, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(220)))
+                $ease = [System.Windows.Media.Animation.CubicEase]::new()
+                $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+                $an.EasingFunction = $ease
+                $tt.BeginAnimation([System.Windows.Media.TranslateTransform]::YProperty, $an)
+                # 落地压一下再弹回，作为「放下去」的反馈。
+                $sk = [System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames]::new()
+                $k1 = [System.Windows.Media.Animation.EasingDoubleKeyFrame]::new(0.94, [System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(110)))
+                $eIn = [System.Windows.Media.Animation.CubicEase]::new()
+                $eIn.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseIn
+                $k1.EasingFunction = $eIn
+                [void]$sk.KeyFrames.Add($k1)
+                $k2 = [System.Windows.Media.Animation.EasingDoubleKeyFrame]::new(1.0, [System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(260)))
+                $eBack = [System.Windows.Media.Animation.BackEase]::new()
+                $eBack.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+                $eBack.Amplitude = 0.3
+                $k2.EasingFunction = $eBack
+                [void]$sk.KeyFrames.Add($k2)
+                $st = [System.Windows.Media.ScaleTransform]::new(1.0, 1.0)
+                $tg = [System.Windows.Media.TransformGroup]::new()
+                [void]$tg.Children.Add($st)
+                $hb.RenderTransform = $tg
+                [void]$tg.Children.Add($tt)
+                $st.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $sk)
+            } catch { }
+        }
+    }
     if ($null -ne $script:BallWindow) {
     }
     } catch { Write-Log ('card render failed: ' + $_.Exception.Message + ' @' + $_.InvocationInfo.ScriptLineNumber) }
