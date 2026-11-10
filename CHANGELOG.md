@@ -1891,3 +1891,38 @@ F05 原本把备注、颜色、子任务捆在一起。备注与颜色成本低�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.13 -- native/overlay.ps1`（注意 v0.22.13 本身带这个 bug）。
+
+## 2026-11-10 11:50 T10：截图与巡检数据保留 7 天
+
+### 改了什么
+- `index.js`：`pruneShots()` 由「只留最近 20 张截图」改为「按修改时间删掉 7 天前的文件」，同时扫描 `shots\` 与 `shots\cam\`；新增常量 `SHOT_KEEP_DAYS = 7`；在 `overlay ready` 事件里调用一次（截图后仍会调用）。
+- `native/overlay.ps1`：新增全局函数 `Get-ShotStorage`（统计张数/字节）与 `Clear-OldShots`（按 mtime 删 7 天前）；设置窗口新增「截图与巡检（保留 7 天）」一栏，显示「共 X 张、Y MB」，并提供「清理 7 天前的」按钮。
+- `README.md` 的「数据目录」表后补一段保留策略说明。
+
+### 为什么
+T10：读屏截图与巡检照片落盘无上限，README 未写保留策略；隐私相关的数据应该自动过期、可见、可手动清。
+
+### 怎么验证
+- `node --check index.js`、`PS parse OK`、BOM `EF BB BF`、无 CRLF。
+- 在 `shots\cam\` 造一个 `_t10_test_old.jpg` 并把 mtime 设为 8 天前，重载宿主后该文件被删。
+- 设置窗口显示张数与 MB；点「清理 7 天前的」后数字刷新。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.14 -- index.js native/overlay.ps1 README.md`。
+- 表：`tmp\打磨计划-before-t10-root.xlsx` / `-planning.xlsx` 覆盖回去。
+
+## 2026-11-10 11:52 修 plan 历史汇总未导出
+
+### 改了什么
+- `lib/plan.js`：`createPlan` 返回值新增 `writeHistory: writePlanHistoryFile`。
+- `index.js`：启动对齐改为 `plan.writeHistory()`（原先是直接调 `writePlanHistoryFile()`）。
+
+### 为什么
+T01 拆出 `lib/plan.js` 后，该函数只存在于模块闭包里；`index.js` 仍在启动时调用它，日志报 `plan history sync failed: writePlanHistoryFile is not defined`，`plan-history.json` 一直没在启动时刷新。
+
+### 怎么验证
+- `node --check index.js`、`lib/plan.js` 通过。
+- 热重载 03:50:22，日志无 `plan history sync failed`。
+
+### 怎么恢复
+- `git revert <本次提交>`。

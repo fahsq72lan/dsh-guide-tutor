@@ -299,6 +299,7 @@ export function apply(ctx, config = {}) {
       case 'ready':
         failuresSinceReady = 0
         log(`overlay ready (pid ${event.pid})`)
+        pruneShots()
         broadcast('overlay', { running: true, pid: Number(event.pid) || null, ready: true })
         break
       case 'captured': {
@@ -504,30 +505,28 @@ export function apply(ctx, config = {}) {
   const pendingCaptures = new Map()
   let captureRequestId = 0
 
-  function pruneShots(keep = 20) {
-    try {
-      const files = fs
-        .readdirSync(shotsDir)
-        .filter((name) => name.startsWith('shot-') && name.endsWith('.png'))
-        .map((name) => {
-          let at = 0
-          try {
-            at = fs.statSync(path.join(shotsDir, name)).mtimeMs
-          } catch {
-            /* ignore */
-          }
-          return { name, at }
-        })
-        .sort((a, b) => b.at - a.at)
-      for (const file of files.slice(keep)) {
+  // T10：截图与巡检照片默认只留 7 天。目录里按修改时间判断，两个子目录都扫
+  // （shots/ 是读屏截图，shots/cam/ 是摄像头巡检），超期就删，避免悄悄堆满磁盘。
+  const SHOT_KEEP_DAYS = 7
+
+  function pruneShots(keepDays = SHOT_KEEP_DAYS) {
+    const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000
+    for (const dir of [shotsDir, path.join(shotsDir, 'cam')]) {
+      let names = []
+      try {
+        names = fs.readdirSync(dir).filter((name) => !name.startsWith('.'))
+      } catch {
+        continue
+      }
+      for (const name of names) {
+        const file = path.join(dir, name)
         try {
-          fs.unlinkSync(path.join(shotsDir, file.name))
+          const stat = fs.statSync(file)
+          if (stat.isFile() && stat.mtimeMs < cutoff) fs.unlinkSync(file)
         } catch {
-          /* ignore */
+          /* 文件可能正被读走，跳过 */
         }
       }
-    } catch {
-      /* ignore */
     }
   }
 
@@ -2752,7 +2751,7 @@ export function apply(ctx, config = {}) {
     }
     // 启动时把历史汇总写一遍：老归档也能立刻出现在「历史」窗里。
     try {
-      writePlanHistoryFile()
+      plan.writeHistory()
     } catch (error) {
       log(`plan history sync failed: ${error?.message ?? error}`)
     }

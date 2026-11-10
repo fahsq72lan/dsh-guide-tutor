@@ -3616,6 +3616,39 @@ function Update-Card($state) {
     } catch { Write-Log ('card render failed: ' + $_.Exception.Message + ' @' + $_.InvocationInfo.ScriptLineNumber) }
 }
 
+# T10：截图与巡检照片的存储统计 / 清理。数据目录固定为 ~/.dsh/guide-tutor。
+function Get-ShotStorage {
+    $root = Join-Path $env:USERPROFILE '.dsh\guide-tutor\shots'
+    $count = 0
+    $bytes = 0
+    foreach ($dir in @($root, (Join-Path $root 'cam'))) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $count++
+            $bytes += $_.Length
+        }
+    }
+    return [pscustomobject]@{ Count = $count; Bytes = $bytes; Root = $root }
+}
+
+function Clear-OldShots {
+    param([int]$days = 7)
+    $root = Join-Path $env:USERPROFILE '.dsh\guide-tutor\shots'
+    $cut = (Get-Date).AddDays(-$days)
+    $removed = 0
+    foreach ($dir in @($root, (Join-Path $root 'cam'))) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        Get-ChildItem -LiteralPath $dir -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -lt $cut } | ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop
+                $removed++
+            } catch { }
+        }
+    }
+    Write-Log ('shot cleanup: removed ' + $removed)
+    return $removed
+}
+
 function Show-SettingsWindow {
     if ($null -ne $script:SettingsWindow -and $script:SettingsWindow.IsVisible) {
         $script:SettingsWindow.Activate()
@@ -3770,6 +3803,52 @@ function Show-SettingsWindow {
         [void]$toneRow.Children.Add($btn)
     }
     [void]$stack.Children.Add($toneRow)
+
+    # T10：截图与巡检照片存了多少、留多久，都在这里说清楚。
+    $shotLab = [System.Windows.Controls.TextBlock]::new()
+    $shotLab.Text = '截图与巡检（保留 7 天）'
+    $shotLab.FontSize = 12
+    $shotLab.Margin = [System.Windows.Thickness]::new(0, 12, 0, 4)
+    [void]$stack.Children.Add($shotLab)
+
+    $shotInfo = [System.Windows.Controls.TextBlock]::new()
+    $shotInfo.FontSize = 11
+    $shotInfo.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    $shotInfo.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(185, 255, 255, 255))
+    [void]$stack.Children.Add($shotInfo)
+    $script:SetShotInfo = $shotInfo
+
+    $refreshShotInfo = {
+        $st = Get-ShotStorage
+        $mb = [math]::Round($st.Bytes / 1MB, 1)
+        $script:SetShotInfo.Text = ('共 {0} 张、{1} MB；超过 7 天的会自动删除。' -f $st.Count, $mb)
+    }
+    & $refreshShotInfo
+
+    $cleanBtn = [System.Windows.Controls.Button]::new()
+    $cleanBtn.Content = '清理 7 天前的'
+    $cleanBtn.FontSize = 11
+    $cleanBtn.Padding = [System.Windows.Thickness]::new(10, 3, 10, 3)
+    $cleanBtn.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+    $cleanBtn.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+    $cleanBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(38, 255, 255, 255))
+    $cleanBtn.Foreground = [System.Windows.Media.Brushes]::White
+    $cleanBtn.BorderThickness = [System.Windows.Thickness]::new(0)
+    $cleanBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $cleanBtn.Add_Click({
+        param($s, $e)
+        try {
+            $n = Clear-OldShots 7
+            $st = Get-ShotStorage
+            $mb = [math]::Round($st.Bytes / 1MB, 1)
+            $script:SetShotInfo.Text = ('已清理 {0} 个；现在 {1} 张、{2} MB。' -f $n, $st.Count, $mb)
+        } catch {
+            Write-Log ('shot cleanup failed: ' + $_.Exception.Message)
+            $script:SetShotInfo.Text = '清理失败，看 overlay.log。'
+        }
+    })
+    [void]$stack.Children.Add($cleanBtn)
+
 
     $closeBtn = [System.Windows.Controls.Button]::new()
     $closeBtn.Content = '关闭'
