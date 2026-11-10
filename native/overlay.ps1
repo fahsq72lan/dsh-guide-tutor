@@ -3203,6 +3203,21 @@ function Complete-CardDragDrop {
     try {
         $it = $script:CardDragDropItem
         if ($null -ne $it) {
+            # 乐观更新：先在本地把这条的 from/to 改掉并立即重建，避免等宿主往返的卡顿。
+            try {
+                $ls = $script:LastState
+                if ($null -ne $ls -and $null -ne $ls.plan -and $null -ne $ls.plan.items) {
+                    foreach ($row in $ls.plan.items) {
+                        if ([string]$row.id -eq $script:CardDragDropId) {
+                            $row.from = $script:CardDragDropFrom
+                            $row.to = $script:CardDragDropTo
+                            break
+                        }
+                    }
+                    $script:CardDragActive = $false
+                    Update-Card $ls
+                }
+            } catch { }
             Send-OverlayEvent @{
                 type = 'plan_update'; id = $script:CardDragDropId
                 from = $script:CardDragDropFrom; to = $script:CardDragDropTo

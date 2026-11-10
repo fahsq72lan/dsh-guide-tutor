@@ -2104,3 +2104,19 @@ F02：在卡片上按住条目上下拖，比点 ✎ 弹窗快得多；用户（
 
 ### 怎么恢复
 - `git revert` 本次提交；或回退到 `fcc1f70`。
+
+## 2026-11-10 13:57 F02 松手卡顿：本地乐观更新，不等宿主往返
+
+### 改了什么
+- `native/overlay.ps1` `Complete-CardDragDrop`：发 `plan_update` 之前，先在 `$script:LastState` 里把该条目的 `from`/`to` 改成本次拖拽结果，置 `$script:CardDragActive = $false`，直接 `Update-Card $script:LastState` 重建；随后再发事件给宿主。宿主返回的新 state 到货时再正常重建一次。
+
+### 为什么
+松手后原本要等宿主写盘 + 广播 + overlay 重建，约 200–300ms，这段时间条目不动，形成「抬起后卡一下才落下」。本地先改再重建，把等待压到重建本身。
+
+### 怎么验证
+- `PS parse OK`、BOM `EF BB BF`、LF 正常；`guide_overlay restart` 无报错。
+- 实机拖动 14:00–15:40 → 15:05–16:45：`drag land` 到 `card drag update` 的间隔由原来约 2ms（但重建在之后异步发生）变为 71ms（重建已同步完成）；逐帧截图（50/120/300ms）显示新条目在松手后 120ms 已带新时间滑入，不再停住等待。
+- 测试后已恢复 14:00–15:40 与未完成状态。
+
+### 怎么恢复
+- `git revert` 本次提交。
