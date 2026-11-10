@@ -1697,3 +1697,20 @@ B05 随 v0.22.5（scripts/dev-watch.mjs）落地，已实测自动触发重载�
 
 ### 怎么恢复
 - `git checkout -- 打磨计划-2026-11.xlsx planning/打磨计划-2026-11.xlsx`（回到 93357f3 的表状态）。
+
+## 2026-11-10 10:12 T01 第四刀：拆出 lib/kb.js
+
+### 改了什么
+- 新增 `lib/kb.js`（约 200 行）：`createKb({ kbDir, broadcast, docxExtract, docxWrite })`，返回 `{ tool, run, list, summary }`，原 `safeKbName` / `kbPathOf` / `kbSummary` / `kbListFiles` / `kbRun` 原样搬入。
+- `index.js`：删原 KB 段 158 行，改 `import { createKb }`、`const kb = createKb(...)`、`const guideKbTool = kb.tool`；`statusSnapshot` 与 `apiHandler` 的 `kbListFiles()` 改 `kb.list()`。4,486 → 4,332 行。
+
+### 为什么
+T01（拆分 index.js）：知识库逻辑与宿主其余部分无共享可变状态，依赖只有目录、广播和两个 docx 函数，适合先拆、验证工厂注入模式。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/kb.js` 均通过。
+- 触发宿主重载：`plugin.log` 02:08:05.354 `disposed` → 02:08:05.568 `ready`。
+- 实调 `guide_kb`：list 返回 6 个文件；save/read/delete `插件/tmp-smoke-kb.md` 正常；save `插件/tmp-smoke-kb.docx` 生成 36,695 B（2 段 / 0 表），已删除测试文件。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.5 -- index.js lib/kb.js`。
