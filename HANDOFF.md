@@ -1,6 +1,6 @@
 # 交接说明（HANDOFF）
 
-> 给下一个工作区会话看。写于 2026-11-09 17:35，版本 **0.21.0**。
+> 给下一个工作区会话看。写于 2026-11-10 09:52，版本 **0.22.3**。
 > 详细改动史在 `CHANGELOG.md`（77 KB，按日期倒序追加）；这份只写「现在是什么状态、接下来要做什么」。
 
 ## 一、这是什么
@@ -75,3 +75,9 @@ C:\Users\<User>\.dsh\guide-tutor\overlay.log
 # 3) 无异常日志
 Get-Content C:\Users\<User>\.dsh\guide-tutor\overlay.log -Tail 20 -Encoding UTF8
 ```
+
+## 八、和用户协作的约定
+
+- **计划表开着时不要干等**：用户 2026-11-10 明确要求——发现 `~$打磨计划-2026-11.xlsx` 锁着，就先把 Excel 关掉（COM `Quit()`，不行再 `Stop-Process excel`），趁空档改表，改完 `Start-Process` 重新打开；两边都不影响。不要再问「你关一下表」。
+- **两份表必须同步**：根目录 `打磨计划-2026-11.xlsx` 与 `planning\打磨计划-2026-11.xlsx`，改一份就要改另一份。
+- **改表后看换行**：`openpyxl` 保存不会破坏格式，但 `edit` 工具会把 `native/*.ps1` 转成 CRLF，改完要 `node` 转回 LF 再提交。

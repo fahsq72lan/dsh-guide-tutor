@@ -1609,3 +1609,20 @@ B06：45 字合成 15.4 秒，整段合成完才开始播，口播像卡住；�
 
 - 删掉 `C:\Users\<User>\.dsh\guide-tutor\tts-cache` 目录即可清缓存。
 - 回滚代码：`tts.ps1` 恢复为 `& $python $synth --out $out ...` 同步合成、播完删临时 mp3；`index.js` 去掉 `GUIDE_TTS_CACHE` 与 `prefetchSpeech`；`tts_edge.py` 的 `emit()` 改回 `ensure_ascii=False`。
+
+## 2026-11-10 09:52 打磨表 B06 打勾 + 记录关表改表约定
+
+### 改了什么
+- `打磨计划-2026-11.xlsx`、`planning\打磨计划-2026-11.xlsx`：`2-Bug与问题` 第 9 行 B06，状态「待做」→「已修复」，验收列改为「缓存命中 1.1 秒起播；首次 3.3 秒；原为 15 秒级。」
+- `HANDOFF.md`：标题版本 0.21.0 → 0.22.3；新增「八、和用户协作的约定」，写入「表开着先关表、改完再重开」与「两份表必须同步」。
+
+### 为什么
+B06 已随 v0.22.3 修复并实测，表内状态滞后；用户 m02972 要求把「关表—改表—重开」固化成流程，避免每回都问。
+
+### 怎么验证
+- `openpyxl` 读回两份表：B06 第 9 行为「已修复」，第 10 行为新验收文案。
+- `git status --short` 只显示两份 xlsx 与 HANDOFF.md；`git diff --stat` 不出现全文件换行 diff。
+
+### 怎么恢复
+- 表：`git checkout -- 打磨计划-2026-11.xlsx planning/打磨计划-2026-11.xlsx`。
+- HANDOFF：`git checkout -- HANDOFF.md`。
