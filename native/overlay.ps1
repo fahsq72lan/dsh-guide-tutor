@@ -3553,6 +3553,8 @@ function Update-Card($state) {
 
         # 长块里每 30 分钟画一条极淡的刻度线：块高还是按真实时长，但里面不再是空白的。
         $inner = [System.Windows.Controls.Grid]::new()
+        # 底部优先级条是叠在内容上的，给内容留出条的高度，短块也不会压字。
+        $content.Margin = [System.Windows.Thickness]::new(0, 0, 0, [math]::Min(6, [math]::Max(2, $rowH - 15)))
         [void]$inner.Children.Add($content)
         if ($rowH -ge 60) {
             $mark = [math]::Floor($fromMin / 30.0) * 30 + 30
@@ -3582,12 +3584,18 @@ function Update-Card($state) {
             default { $prioColor = [System.Windows.Media.Color]::FromArgb(60, 255, 255, 255) }
         }
         $bar = [System.Windows.Controls.Border]::new()
-        $bar.Height = 3
+        if ($rowH -lt 46) {
+            # 短块只留一条更细的线，贴块底，避免和文字挤在一起。
+            $bar.Height = 1.5
+            $bar.Margin = [System.Windows.Thickness]::new(0, 0, 0, 1)
+        } else {
+            $bar.Height = 2
+            $bar.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
+        }
         $bar.CornerRadius = [System.Windows.CornerRadius]::new(1.5)
         $bar.Background = [System.Windows.Media.SolidColorBrush]::new($prioColor)
         $bar.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
         $bar.VerticalAlignment = [System.Windows.VerticalAlignment]::Bottom
-        $bar.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
         $bar.IsHitTestVisible = $false
         [void]$inner.Children.Add($bar)
         $body.Child = $inner
