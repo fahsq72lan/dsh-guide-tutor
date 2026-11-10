@@ -3253,8 +3253,10 @@ function Update-Card($state) {
         $body.CornerRadius = [System.Windows.CornerRadius]::new(8)
         $body.Padding = [System.Windows.Thickness]::new(8, 3, 8, 3)
         $body.Cursor = [System.Windows.Input.Cursors]::Hand
-        # 标题被截断时，鼠标悬停能看到全文。
-        $body.ToolTip = [string]$item.title
+        # 标题被截断时，鼠标悬停能看到全文；有备注就一起带上。
+        $tipText = [string]$item.title
+        if (-not [string]::IsNullOrEmpty([string]$item.note)) { $tipText = $tipText + ' ｜ ' + [string]$item.note }
+        $body.ToolTip = $tipText
         [System.Windows.Controls.Grid]::SetColumn($body, 1)
 
         $itemId = [string]$item.id
@@ -3332,6 +3334,17 @@ function Update-Card($state) {
             $what.TextWrapping = [System.Windows.TextWrapping]::Wrap
             $what.Margin = [System.Windows.Thickness]::new(0, 1, 0, 0)
             [void]$stack.Children.Add($what)
+            # F05：备注一行（「带电脑、课本」），只在块够高时显示，短块用 ToolTip 兜底。
+            if (-not [string]::IsNullOrEmpty([string]$item.note)) {
+                $noteText = [System.Windows.Controls.TextBlock]::new()
+                $noteText.Text = [string]$item.note
+                $noteText.FontSize = 9
+                $noteText.Margin = [System.Windows.Thickness]::new(0, 1, 0, 0)
+                $noteText.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+                $noteText.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+                $noteText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 214, 140))
+                [void]$stack.Children.Add($noteText)
+            }
             $content = $stack
         }
 
@@ -3354,6 +3367,25 @@ function Update-Card($state) {
                 }
                 $mark += 30
             }
+        }
+        # F05：优先级色条（P0 红 / P1 橙 / P2 蓝 / P3 绿），没填就不画。
+        $prioColor = $null
+        switch ([string]$item.priority) {
+            'P0' { $prioColor = [System.Windows.Media.Color]::FromArgb(230, 229, 72, 77) }
+            'P1' { $prioColor = [System.Windows.Media.Color]::FromArgb(230, 245, 165, 36) }
+            'P2' { $prioColor = [System.Windows.Media.Color]::FromArgb(210, 76, 141, 255) }
+            'P3' { $prioColor = [System.Windows.Media.Color]::FromArgb(210, 48, 164, 108) }
+        }
+        if ($null -ne $prioColor) {
+            $bar = [System.Windows.Controls.Border]::new()
+            $bar.Width = 3
+            $bar.CornerRadius = [System.Windows.CornerRadius]::new(1.5)
+            $bar.Background = [System.Windows.Media.SolidColorBrush]::new($prioColor)
+            $bar.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Left
+            $bar.VerticalAlignment = [System.Windows.VerticalAlignment]::Stretch
+            $bar.Margin = [System.Windows.Thickness]::new(0, 3, 0, 3)
+            $bar.IsHitTestVisible = $false
+            [void]$inner.Children.Add($bar)
         }
         $body.Child = $inner
 

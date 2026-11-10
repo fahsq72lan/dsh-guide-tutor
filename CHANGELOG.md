@@ -1817,3 +1817,28 @@ T01 八刀拆完（log/state/video/kb/focus/camera/edict/plan），`index.js` 4,
 
 ### 怎么恢复
 - `git revert <本次提交>`。
+
+## 2026-11-10 11:30 F05a：清单备注与优先级颜色
+
+### 改了什么
+- `lib/plan.js`（+约 45 行）：
+  - 新增 `normalizePriority()`：接受 P0–P3、0–3、高/中/低，非法值落空。
+  - `add` 支持 `note`、`priority`；`text` 模式会从原话里提取「带电脑、课本」进 `note`，并从标题里去掉这段。
+  - `update` 支持改 `note` / `priority`；`readPlanFile` 重建条目时保留这两个字段（否则下一次 add 会把它们覆盖掉）。
+  - `planItemLine` 输出 `[P1] …（带电脑）`，`list` 文本直接可见。
+  - `guide_plan` schema 加 `priority`，`note` 描述扩成 add/update 备注 + remove 原因。
+- `native/overlay.ps1`（+约 35 行）：卡片条目左侧 3px 优先级色条（P0 红 / P1 橙 / P2 蓝 / P3 绿，未填不画）；长块标题下加 9pt 备注行；短块用 ToolTip 显示「标题 ｜ 备注」。
+
+### 为什么
+F05 原本把备注、颜色、子任务捆在一起。备注与颜色成本低、每天用得上；子任务与目标看板的步骤功能重叠，先拆出去（F05b 待定）。
+
+### 怎么验证
+- `node --check lib/plan.js` 通过；BOM `EF BB BF`、`PS parse OK`；overlay 重启成功。
+- 重载：`plugin.log` 03:25:04.075 `ready`。
+- `guide_plan update id=fmw9b4njj note=带电脑 priority=P1` → 清单显示 `[P1] 08:30–10:10 …（带电脑）`。
+- `guide_plan add text=今天晚上九点在宿舍写报告，带电脑和水杯` → title 只剩「写报告」，note「电脑和水杯」，priority P0。
+- 截屏确认卡片：08:30 那条左侧橙色条、标题下「带电脑」小字。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.10 -- lib/plan.js native/overlay.ps1`。
+- 表：`tmp\打磨计划-before-f05a-root.xlsx` / `-planning.xlsx` 覆盖回去。
