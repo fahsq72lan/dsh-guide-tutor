@@ -413,6 +413,9 @@ export function apply(ctx, config = {}) {
             to: String(event.to || ''),
             place: String(event.place || ''),
             title: newTitle,
+            note: String(event.note || ''),
+            priority: String(event.priority || ''),
+            repeat: String(event.repeat || ''),
           })
           log('plan add from card -> ' + (added?.error || String(event.from || '?') + ' ' + newTitle))
           pushPlanState(planForToday())
@@ -431,6 +434,9 @@ export function apply(ctx, config = {}) {
             to: String(event.to || ''),
             place: String(event.place !== undefined ? event.place : ''),
             title: String(event.title || ''),
+            note: String(event.note !== undefined ? event.note : ''),
+            priority: String(event.priority !== undefined ? event.priority : ''),
+            repeat: String(event.repeat !== undefined ? event.repeat : ''),
           })
           log('plan update from card -> ' + (updated?.error || String(event.id || '?')))
           pushPlanState(planForToday())

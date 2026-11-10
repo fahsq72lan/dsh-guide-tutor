@@ -1926,3 +1926,22 @@ T01 拆出 `lib/plan.js` 后，该函数只存在于模块闭包里；`index.js`
 
 ### 怎么恢复
 - `git revert <本次提交>`。
+
+## 2026-11-10 12:10 桌面清单支持重复任务与模板（F03）
+
+### 改了什么
+- `lib/plan.js`：新增 `normalizeRepeat`、`readRepeatRules`/`writeRepeatRules`、`repeatDue`、`materializeRepeats`、`readTemplates`/`writeTemplates`；`readPlanFile` 保留 `repeat`/`repeatRuleId`；`planForToday` 在换天和当天首次调用时铺重复任务（幂等）；`add`/`update` 支持 `repeat`；`remove` 带 `repeatRuleId` 时一并删规则；`restore` 清理已失效的规则引用；新增 `template_save`/`template_apply`/`template_list`/`template_remove`；schema 与 render 同步。
+- `native/overlay.ps1`：卡片长块在时间行后显示「↻每天/工作日/每周」，短块拼进标题，ToolTip 也带上；新增/编辑窗口加「重复」四个小块。
+- `index.js`：`plan_add`/`plan_update` 事件透传 `note`/`priority`/`repeat`。
+- 新增数据文件：`plan-repeats.json`（重复规则）、`plan-templates.json`（模板）。
+
+### 为什么
+F03：课表之外的固定习惯（背单词、跑步、复盘）不用每天手加；常用的一天也应该能一键铺开。
+
+### 怎么验证
+- `node --check lib/plan.js`、`node --check index.js`、`PS parse OK`、BOM/LF 正常。
+- 实调：加 `repeat=daily` 一条 → 清单只出现一条；把 plan.json 日期改到昨天再 list → 今天的背单词自动重铺、id 更新、done=false；`template_save 晚间` → `template_apply 晚间` 铺 2 条；测试数据已清理、plan.json 已还原。
+- 截图确认卡片短块显示「↻工作日」。
+
+### 怎么恢复
+- `git revert`；删掉 `%USERPROFILE%\.dsh\guide-tutor\plan-repeats.json`、`plan-templates.json` 即回到无重复任务状态。

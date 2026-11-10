@@ -2517,6 +2517,7 @@ function Show-AddTaskWindow {
     $initTitle = ''
     $initNote = ''
     $initPri = ''
+    $initRepeat = ''
     if ($editing) {
         if (-not [string]::IsNullOrWhiteSpace([string]$EditItem.from)) { $fromText = [string]$EditItem.from }
         if (-not [string]::IsNullOrWhiteSpace([string]$EditItem.to)) { $toText = [string]$EditItem.to }
@@ -2524,6 +2525,7 @@ function Show-AddTaskWindow {
         $initTitle = [string]$EditItem.title
         $initNote = [string]$EditItem.note
         $initPri = [string]$EditItem.priority
+        $initRepeat = [string]$EditItem.repeat
     }
     if (-not $editing -and -not [string]::IsNullOrWhiteSpace([string]$PrefillTitle)) { $initTitle = [string]$PrefillTitle }
 
@@ -2640,6 +2642,68 @@ function Show-AddTaskWindow {
     [void]$priRow.Children.Add($priBox)
     [void]$stack.Children.Add($priRow)
 
+    # F03：重复。四个小块：不重复 / 每天 / 工作日 / 每周。
+    $repRow = [System.Windows.Controls.Grid]::new()
+    $repRow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 9)
+    $rc0 = [System.Windows.Controls.ColumnDefinition]::new()
+    $rc0.Width = [System.Windows.GridLength]::new(52, [System.Windows.GridUnitType]::Pixel)
+    $rc1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $rc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    [void]$repRow.ColumnDefinitions.Add($rc0)
+    [void]$repRow.ColumnDefinitions.Add($rc1)
+    $repName = [System.Windows.Controls.TextBlock]::new()
+    $repName.Text = '重复'
+    $repName.FontSize = 12
+    $repName.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $repName.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    [System.Windows.Controls.Grid]::SetColumn($repName, 0)
+    [void]$repRow.Children.Add($repName)
+    $repBox = [System.Windows.Controls.StackPanel]::new()
+    $repBox.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $repBox.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $script:AddFrmRepValue = [string]$initRepeat
+    $script:AddFrmRepBtns = @()
+    $repPaint = {
+        param($chip, $on)
+        if ($on) {
+            $chip.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(70, 76, 141, 255))
+            $chip.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(210, 76, 141, 255))
+        } else {
+            $chip.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 32, 36, 44))
+            $chip.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(40, 255, 255, 255))
+        }
+    }
+    $script:AddFrmRepPaint = $repPaint
+    foreach ($d in @(@{ v = ''; t = '不重复' }, @{ v = 'daily'; t = '每天' }, @{ v = 'weekdays'; t = '工作日' }, @{ v = 'weekly'; t = '每周' })) {
+        $chip = [System.Windows.Controls.Border]::new()
+        $chip.Width = 50
+        $chip.Height = 24
+        $chip.Margin = [System.Windows.Thickness]::new(0, 0, 6, 0)
+        $chip.CornerRadius = [System.Windows.CornerRadius]::new(5)
+        $chip.BorderThickness = [System.Windows.Thickness]::new(1)
+        $chip.Cursor = [System.Windows.Input.Cursors]::Hand
+        $chip.Tag = [string]$d.v
+        $chipText = [System.Windows.Controls.TextBlock]::new()
+        $chipText.Text = [string]$d.t
+        $chipText.FontSize = 11
+        $chipText.Foreground = [System.Windows.Media.Brushes]::White
+        $chipText.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+        $chipText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $chip.Child = $chipText
+        $chip.Add_PreviewMouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            $script:AddFrmRepValue = [string]$s.Tag
+            foreach ($b in $script:AddFrmRepBtns) { & $script:AddFrmRepPaint $b ([string]$b.Tag -eq $script:AddFrmRepValue) }
+        })
+        [void]$repBox.Children.Add($chip)
+        $script:AddFrmRepBtns += $chip
+        & $repPaint $chip ([string]$d.v -eq $script:AddFrmRepValue)
+    }
+    [System.Windows.Controls.Grid]::SetColumn($repBox, 1)
+    [void]$repRow.Children.Add($repBox)
+    [void]$stack.Children.Add($repRow)
+
     # WPF 事件委托执行时局部变量可能已经出栈，统一存到 $script: 里给 handler 用。
     $script:AddFrmFrom = $fFrom.Box
     $script:AddFrmTo = $fTo.Box
@@ -2682,6 +2746,7 @@ function Show-AddTaskWindow {
             $place = ([string]$script:AddFrmPlace.Text).Trim()
             $note = ([string]$script:AddFrmNote.Text).Trim()
             $pri = [string]$script:AddFrmPriValue
+            $rep = [string]$script:AddFrmRepValue
             $bad = $null
             if ($title -eq '') { $bad = '做什么不能空着。' }
             elseif ($from -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { $bad = '开始时间要写成 HH:mm，例如 14:00。' }
@@ -2694,11 +2759,11 @@ function Show-AddTaskWindow {
                 return
             }
             if ($script:AddFrmEditId -ne '') {
-                Send-OverlayEvent @{ type = 'plan_update'; id = $script:AddFrmEditId; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri }
-                Write-Log ('task update sent: ' + $script:AddFrmEditId + ' ' + $from + '-' + $to + ' ' + $title + ' ' + $pri)
+                Send-OverlayEvent @{ type = 'plan_update'; id = $script:AddFrmEditId; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri; repeat = $rep }
+                Write-Log ('task update sent: ' + $script:AddFrmEditId + ' ' + $from + '-' + $to + ' ' + $title + ' ' + $pri + ' ' + $rep)
             } else {
-                Send-OverlayEvent @{ type = 'plan_add'; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri }
-                Write-Log ('add task sent: ' + $from + '-' + $to + ' ' + $title + ' ' + $pri)
+                Send-OverlayEvent @{ type = 'plan_add'; from = $from; to = $to; place = $place; title = $title; note = $note; priority = $pri; repeat = $rep }
+                Write-Log ('add task sent: ' + $from + '-' + $to + ' ' + $title + ' ' + $pri + ' ' + $rep)
             }
             if ($null -ne $script:AddTaskWindow) { $script:AddTaskWindow.Close() }
         }
@@ -3337,6 +3402,10 @@ function Update-Card($state) {
         # 标题被截断时，鼠标悬停能看到全文；有备注就一起带上。
         $tipText = [string]$item.title
         if (-not [string]::IsNullOrEmpty([string]$item.note)) { $tipText = $tipText + ' ｜ ' + [string]$item.note }
+        if (-not [string]::IsNullOrEmpty([string]$item.repeat)) {
+            $tipRep = switch ([string]$item.repeat) { 'daily' { '每天' } 'weekdays' { '工作日' } 'weekly' { '每周' } default { '' } }
+            $tipText = $tipText + ' ｜ ↻' + $tipRep
+        }
         $body.ToolTip = $tipText
         [System.Windows.Controls.Grid]::SetColumn($body, 1)
 
@@ -3387,6 +3456,10 @@ function Update-Card($state) {
         if ($rowH -lt 46) {
             # 短块（25 分钟那种）：☐ + 标题同一行，但标题必须放进「有确定宽度」的列里，
             # 否则 StackPanel 给的是无限宽，TextWrapping 永远不触发、文字直接被裁掉。
+            if (-not [string]::IsNullOrEmpty([string]$item.repeat)) {
+                $repText = switch ([string]$item.repeat) { 'daily' { '每天' } 'weekdays' { '工作日' } 'weekly' { '每周' } default { '' } }
+                $what.Text = [string]$item.title + ' ↻' + $repText
+            }
             $line = [System.Windows.Controls.Grid]::new()
             $line.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
             $lc0 = [System.Windows.Controls.ColumnDefinition]::new()
@@ -3411,6 +3484,15 @@ function Update-Card($state) {
             $kindRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
             [void]$kindRow.Children.Add($box)
             [void]$kindRow.Children.Add($when)
+            if (-not [string]::IsNullOrEmpty([string]$item.repeat)) {
+                $rep = [System.Windows.Controls.TextBlock]::new()
+                $repText = switch ([string]$item.repeat) { 'daily' { '每天' } 'weekdays' { '工作日' } 'weekly' { '每周' } default { '' } }
+                $rep.Text = '↻' + $repText
+                $rep.FontSize = 8
+                $rep.Margin = [System.Windows.Thickness]::new(4, 0, 0, 0)
+                $rep.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 150, 210, 255))
+                [void]$kindRow.Children.Add($rep)
+            }
             [void]$stack.Children.Add($kindRow)
             $what.TextWrapping = [System.Windows.TextWrapping]::Wrap
             $what.Margin = [System.Windows.Thickness]::new(0, 1, 0, 0)
