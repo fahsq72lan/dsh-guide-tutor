@@ -1682,3 +1682,18 @@ B05：改 index.js 要手动改 reload 文本、再猜有没有生效；现在�
 
 ### 怎么恢复
 - 删 `scripts/dev-watch.mjs`，去掉 package.json 的 scripts 段即可；不影响插件运行。
+
+## 2026-11-10 10:05 打磨表 B05 打勾
+
+### 改了什么
+- 两份 `打磨计划-2026-11.xlsx`：`2-Bug与问题` 的 B05 状态改「已修复」，同步修复方案与验证列。
+
+### 为什么
+B05 随 v0.22.5（scripts/dev-watch.mjs）落地，已实测自动触发重载。
+
+### 怎么验证
+- `openpyxl` 读回两份：B05 第 9 列为「已修复」。
+- `git diff --stat` 两份 xlsx 只有二进制小改动。
+
+### 怎么恢复
+- `git checkout -- 打磨计划-2026-11.xlsx planning/打磨计划-2026-11.xlsx`（回到 93357f3 的表状态）。
