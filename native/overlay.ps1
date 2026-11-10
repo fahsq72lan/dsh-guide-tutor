@@ -3029,13 +3029,16 @@ function Get-CardDragMinute([double]$yCanvas) {
     return [math]::Round($raw / 5.0) * 5.0
 }
 
-function Clear-CardDrag {
+function Clear-CardDrag([bool]$restore = $true) {
     if ($null -ne $script:CardDragTimer) { try { $script:CardDragTimer.Stop() } catch { } }
     $b = $script:CardDragBody
     if ($null -ne $b) {
-        try { $b.RenderTransform = [System.Windows.Media.Transform]::Identity } catch { }
-        try { [System.Windows.Controls.Panel]::SetZIndex($b, 0) } catch { }
-        try { $b.Opacity = 1.0 } catch { }
+        # 落下成功时不要复原：旧条目紧接着会被重建替换，复原会让它在重建前跳回原位。
+        if ($restore) {
+            try { $b.RenderTransform = [System.Windows.Media.Transform]::Identity } catch { }
+            try { [System.Windows.Controls.Panel]::SetZIndex($b, 0) } catch { }
+            try { $b.Opacity = 1.0 } catch { }
+        }
         try { [void]$b.ReleaseMouseCapture() } catch { }
     }
     if ($null -ne $script:CardDragBadge) {
@@ -3089,11 +3092,11 @@ function Begin-CardDrag {
     $script:CardDragScale = $st
     $script:CardDragBadge = $null
     $script:CardDragSettled = $false
-    if ([double]$script:CardDragDur -gt 0 -and $body.ActualHeight -gt 0) {
-        # 条目高度 / 时长 反推每分钟像素，比从整块时间轴换算稳（不受滚动影响）。
-        $script:CardDragPx = [double]$body.ActualHeight / [double]$script:CardDragDur
-    } elseif ([double]$script:CardPxPerMin -gt 0) {
+    # 用布局的每分钟像素，不能拿条目高度反推：短条目有最小高度，反推会偏。
+    if ([double]$script:CardPxPerMin -gt 0) {
         $script:CardDragPx = [double]$script:CardPxPerMin
+    } elseif ([double]$script:CardDragDur -gt 0 -and $body.ActualHeight -gt 0) {
+        $script:CardDragPx = [double]$body.ActualHeight / [double]$script:CardDragDur
     } else { $script:CardDragPx = 1.0 }
     $script:CardDragGrab = [System.Windows.Point]::new($script:CardDragMouse.X - $pos.X, $script:CardDragMouse.Y - $pos.Y)
     try { [void]$body.CaptureMouse() } catch { }
@@ -3153,15 +3156,7 @@ function Start-CardDragTimer {
                 $script:CardDragSettled = $true
                 Settle-CardDrag
             }
-            $sv = $script:CardScroll
-            $my = $script:CardDragMouse.Y
-            if ($null -ne $sv) {
-                $svTop = 0.0
-                try { $svTop = $sv.TranslatePoint([System.Windows.Point]::new(0, 0), $script:CardDragLayer).Y } catch { }
-                $svBottom = $svTop + $sv.ActualHeight
-                if ($my -lt ($svTop + 28)) { $sv.ScrollToVerticalOffset([math]::Max(0, $sv.VerticalOffset - 7)) }
-                elseif ($my -gt ($svBottom - 28)) { $sv.ScrollToVerticalOffset([math]::Min($sv.ScrollableHeight, $sv.VerticalOffset + 7)) }
-            }
+            # 拖动期间不自动滚动：滚动会改 ScrollViewer 偏移，重建后条目位置和手里看到的不一致，就成了跳变。
             Update-CardDragBadge
         } catch { }
     })
@@ -3218,7 +3213,8 @@ function Complete-CardDragDrop {
         }
         Write-Log ('card drag update: ' + $script:CardDragDropId + ' -> ' + $script:CardDragDropFrom + '-' + $script:CardDragDropTo)
     } catch { }
-    Clear-CardDrag
+    # 不复原 RenderTransform：条目会停在新行上，等宿主重建替换，避免重建前闪回原位。
+    Clear-CardDrag $false
 }
 
 function Finish-CardDrag {
