@@ -2010,3 +2010,22 @@ F03：课表之外的固定习惯（背单词、跑步、复盘）不用每天�
 
 ### 怎么恢复
 - `git revert`。
+
+## 2026-11-10 13:10 清单条目拖拽改时间（F02）
+
+### 改了什么
+- `native/overlay.ps1`：新增拖拽函数块（`Get-CardDragMinute` / `Clear-CardDrag` / `Set-CardDragLift` / `Begin-CardDrag` / `Settle-CardDrag` / `Update-CardDragBadge` / `Start-CardDragTimer` / `Start-CardDrag` / `Update-CardDrag` / `Finish-CardDrag`）；卡片外层加 `Canvas` 拖影层（`$script:CardDragLayer`）；条目绑定 `PreviewMouseLeftButtonDown` / `PreviewMouseMove` / `PreviewMouseLeftButtonUp` / `LostMouseCapture`；拖动期间 `Update-Card` 直接返回，不重建条目；松手按 5 分钟吸附并只发一次 `plan_update`。
+- 动效：移动超过 4px 才进入拖拽（4px 内仍算点击打勾）；条目托起为 1.045 倍、阴影 blur 0→18 / opacity 0→0.5（150ms CubicEaseOut）；拖影用 `VisualBrush` 复制条目、16ms 定时器 + 0.45 阻尼跟随；鼠标停 180ms 触发「落定」（缩放回到 1.0、阴影减弱），再动恢复浮起；松手后 160ms 滑到吸附位置再消失；拖动中显示「目标时间」徽标；离上下边缘 28px 自动滚动。
+- `index.js`：`plan_update` 事件补传 `note` / `priority` / `repeat`，拖拽改时间时备注、优先级、重复标记不会丢。
+
+### 为什么
+F02：在卡片上按住条目上下拖，比点 ✎ 弹窗快得多；用户（m04947）要求必须有「被托起来」的动画、拖动特效和拖动中突然停下的处理。
+
+### 怎么验证
+- `PS parse OK`、BOM `EF BB BF`、LF 正常；`guide_overlay restart` 后实机拖动：
+  - 14:00–15:40「调试插件」拖到 16:00 附近 → `overlay.log` 出现 `card drag update: tmwa0clo4 -> 16:00-17:40`，`plan.json` 更新为 16:00–17:40，备注「大学英语不去了…」保留；
+  - 拖动中截屏可见目标时间徽标与拖影；测试后已把条目改回 14:00–15:40。
+- 另测：4px 内松开仍走打勾；拖到卡片下沿会自动滚动。
+
+### 怎么恢复
+- `git revert` 本次提交；拖拽代码集中在 `# --- 条目拖拽（F02）` 到 `function New-CardWindow {` 之间，删除该块并把 `$outer` / `$dragLayer` 换回 `$root.Child = $stack` 即可回到无拖拽状态。

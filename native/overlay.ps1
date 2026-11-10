@@ -3016,6 +3016,257 @@ function Update-CardScrollThumb {
     } catch { }
 }
 
+# --- 条目拖拽（F02）：按住条目上下拖，松手把 from/to 改到新位置 ------------
+# 拖影用 VisualBrush 复制条目，放在 Canvas 上，不受 ScrollViewer 裁剪。
+
+function Get-CardDragMinute([double]$yCanvas) {
+    $px = [double]$script:CardDragPx
+    if ($px -le 0) { return $null }
+    $delta = ($yCanvas - [double]$script:CardDragOriginTop) / $px
+    $raw = [double]$script:CardDragFromMin + $delta
+    return [math]::Round($raw / 5.0) * 5.0
+}
+
+function Clear-CardDrag {
+    $script:CardDragActive = $false
+    $script:CardDragMoved = $false
+    if ($null -ne $script:CardDragRect) {
+        try { [void]$script:CardDragLayer.Children.Remove($script:CardDragRect) } catch { }
+    }
+    if ($null -ne $script:CardDragBadge) {
+        try { [void]$script:CardDragLayer.Children.Remove($script:CardDragBadge) } catch { }
+    }
+    if ($null -ne $script:CardDragTimer) {
+        try { $script:CardDragTimer.Stop() } catch { }
+    }
+    if ($null -ne $script:CardDragBody) {
+        try { $script:CardDragBody.Opacity = 1.0 } catch { }
+        try { [void]$script:CardDragBody.ReleaseMouseCapture() } catch { }
+    }
+    $script:CardDragBody = $null
+    $script:CardDragRect = $null
+    $script:CardDragBadge = $null
+    $script:CardDragTimer = $null
+    $script:CardDragActive = $false
+    $script:CardDragMoved = $false
+    $script:CardDragSettled = $false
+    $script:CardDragItemId = ''
+}
+
+function Set-CardDragLift([double]$scale, [double]$blur, [double]$shadow) {
+    if ($null -eq $script:CardDragScale) { return }
+    $dur = [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(150))
+    $ease = [System.Windows.Media.Animation.CubicEase]::new()
+    $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+    $sx = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragScale.ScaleX, $scale, $dur)
+    $sx.EasingFunction = $ease
+    $sy = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragScale.ScaleY, $scale, $dur)
+    $sy.EasingFunction = $ease
+    $script:CardDragScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $sx)
+    $script:CardDragScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $sy)
+    if ($null -ne $script:CardDragBlur) {
+        $bo = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragBlur.Opacity, $shadow, $dur)
+        $script:CardDragBlur.BeginAnimation([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty, $bo)
+        $bb = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragBlur.BlurRadius, $blur, $dur)
+        $script:CardDragBlur.BeginAnimation([System.Windows.Media.Effects.DropShadowEffect]::BlurRadiusProperty, $bb)
+    }
+}
+
+function Begin-CardDrag {
+    $script:CardDragActive = $true
+    $body = $script:CardDragBody
+    $layer = $script:CardDragLayer
+    if ($null -eq $body -or $null -eq $layer) { return }
+    $pos = $body.TranslatePoint([System.Windows.Point]::new(0, 0), $layer)
+    $rect = [System.Windows.Shapes.Rectangle]::new()
+    $rect.Width = $body.ActualWidth
+    $rect.Height = $body.ActualHeight
+    $rect.RadiusX = 8
+    $rect.RadiusY = 8
+    $brush = [System.Windows.Media.VisualBrush]::new($body)
+    $brush.Stretch = [System.Windows.Media.Stretch]::Fill
+    $rect.Fill = $brush
+    $rect.Opacity = 0.99
+    $script:CardDragBlur = [System.Windows.Media.Effects.DropShadowEffect]::new()
+    $script:CardDragBlur.BlurRadius = 0
+    $script:CardDragBlur.ShadowDepth = 7
+    $script:CardDragBlur.Opacity = 0
+    $script:CardDragBlur.Color = [System.Windows.Media.Color]::FromArgb(255, 0, 0, 0)
+    $rect.Effect = $script:CardDragBlur
+    $rect.RenderTransformOrigin = [System.Windows.Point]::new(0.5, 0.5)
+    $script:CardDragScale = [System.Windows.Media.ScaleTransform]::new(1.0, 1.0)
+    $rect.RenderTransform = $script:CardDragScale
+    [System.Windows.Controls.Canvas]::SetLeft($rect, $pos.X)
+    [System.Windows.Controls.Canvas]::SetTop($rect, $pos.Y)
+    [void]$layer.Children.Add($rect)
+    $script:CardDragRect = $rect
+    $script:CardDragOriginTop = [double]$pos.Y
+    if ([double]$script:CardDragDur -gt 0 -and $body.ActualHeight -gt 0) {
+        # 条目高度 / 时长 反推每分钟像素，比从整块时间轴换算稳（不受滚动影响）。
+        $script:CardDragPx = [double]$body.ActualHeight / [double]$script:CardDragDur
+    } elseif ([double]$script:CardPxPerMin -gt 0) {
+        $script:CardDragPx = [double]$script:CardPxPerMin
+    } else { $script:CardDragPx = 1.0 }
+    $script:CardDragGrab = [System.Windows.Point]::new($script:CardDragMouse.X - $pos.X, $script:CardDragMouse.Y - $pos.Y)
+    $body.Opacity = 0.22
+    try { [void]$body.CaptureMouse() } catch { }
+    Set-CardDragLift 1.045 18 0.5
+    Start-CardDragTimer
+}
+
+function Settle-CardDrag {
+    # 鼠标停住 180ms：浮起感收一点，表示"停在这儿、可以松手了"。
+    Set-CardDragLift 1.0 8 0.28
+}
+
+function Update-CardDragBadge {
+    $rect = $script:CardDragRect
+    if ($null -eq $rect) { return }
+    $ly = [double][System.Windows.Controls.Canvas]::GetTop($rect)
+    $m = Get-CardDragMinute $ly
+    if ($null -eq $m) { return }
+    $dur = [double]$script:CardDragDur
+    $from = [double]$m
+    if ($from -lt [double]$script:CardDayStart) { $from = [double]$script:CardDayStart }
+    if ($from -gt ([double]$script:CardDayEnd - $dur)) { $from = [double]$script:CardDayEnd - $dur }
+    $to = $from + $dur
+    $txt = '{0:00}:{1:00}–{2:00}:{3:00}' -f [math]::Floor($from / 60), ($from % 60), [math]::Floor($to / 60), ($to % 60)
+    if ($null -eq $script:CardDragBadge) {
+        $b = [System.Windows.Controls.Border]::new()
+        $b.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 30, 36, 48))
+        $b.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(90, 255, 196, 120))
+        $b.BorderThickness = [System.Windows.Thickness]::new(1)
+        $b.CornerRadius = [System.Windows.CornerRadius]::new(7)
+        $b.Padding = [System.Windows.Thickness]::new(8, 3, 8, 3)
+        $tb = [System.Windows.Controls.TextBlock]::new()
+        $tb.FontSize = 10.5
+        $tb.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(240, 255, 210, 150))
+        $b.Child = $tb
+        [void]$script:CardDragLayer.Children.Add($b)
+        $script:CardDragBadge = $b
+        $script:CardDragBadgeText = $tb
+    }
+    $script:CardDragBadgeText.Text = $txt
+    $script:CardDragBadge.UpdateLayout()
+    $bw = $script:CardDragBadge.ActualWidth
+    if ($bw -le 0) { $bw = 120 }
+    [System.Windows.Controls.Canvas]::SetLeft($script:CardDragBadge, 8)
+    [System.Windows.Controls.Canvas]::SetTop($script:CardDragBadge, [math]::Max(2, [double][System.Windows.Controls.Canvas]::GetTop($rect) - 22))
+}
+
+function Start-CardDragTimer {
+    if ($null -ne $script:CardDragTimer) { return }
+    $timer = [System.Windows.Threading.DispatcherTimer]::new()
+    $timer.Interval = [TimeSpan]::FromMilliseconds(16)
+    $timer.Add_Tick({
+        try {
+            if (-not $script:CardDragActive) { return }
+            $rect = $script:CardDragRect
+            if ($null -eq $rect) { return }
+            $layer = $script:CardDragLayer
+            $my = $script:CardDragMouse.Y
+            $tx = [double]$script:CardDragMouse.X - [double]$script:CardDragGrab.X
+            $ty = [double]$script:CardDragMouse.Y - [double]$script:CardDragGrab.Y
+            $cx = [double][System.Windows.Controls.Canvas]::GetLeft($rect)
+            $cy = [double][System.Windows.Controls.Canvas]::GetTop($rect)
+            $nx = $cx + ($tx - $cx) * 0.45
+            $ny = $cy + ($ty - $cy) * 0.45
+            [System.Windows.Controls.Canvas]::SetLeft($rect, $nx)
+            [System.Windows.Controls.Canvas]::SetTop($rect, $ny)
+            if (-not $script:CardDragSettled -and ([datetime]::Now - $script:CardDragLastMove).TotalMilliseconds -gt 180) {
+                $script:CardDragSettled = $true
+                Settle-CardDrag
+            }
+            $sv = $script:CardScroll
+            if ($null -ne $sv) {
+                $svTop = 0.0
+                try { $svTop = $sv.TranslatePoint([System.Windows.Point]::new(0, 0), $layer).Y } catch { }
+                $svBottom = $svTop + $sv.ActualHeight
+                if ($my -lt ($svTop + 28)) { $sv.ScrollToVerticalOffset([math]::Max(0, $sv.VerticalOffset - 7)) }
+                elseif ($my -gt ($svBottom - 28)) { $sv.ScrollToVerticalOffset([math]::Min($sv.ScrollableHeight, $sv.VerticalOffset + 7)) }
+            }
+            Update-CardDragBadge
+        } catch { }
+    })
+    $script:CardDragTimer = $timer
+    $timer.Start()
+}
+
+function Start-CardDrag($body, $e) {
+    Clear-CardDrag
+    $script:CardDragBody = $body
+    $script:CardDragMouse = $e.GetPosition($script:CardDragLayer)
+    $script:CardDragStart = $script:CardDragMouse
+    $script:CardDragLastMove = [datetime]::Now
+    $script:CardDragMoved = $false
+    $script:CardDragActive = $false
+}
+
+function Update-CardDrag($body, $e) {
+    if ($null -eq $script:CardDragBody -or $body -ne $script:CardDragBody) { return }
+    if ($e.LeftButton -ne [System.Windows.Input.MouseButtonState]::Pressed) { return }
+    $p = $e.GetPosition($script:CardDragLayer)
+    $script:CardDragMouse = $p
+    if (-not $script:CardDragActive) {
+        $dx = [math]::Abs($p.X - [double]$script:CardDragStart.X)
+        $dy = [math]::Abs($p.Y - [double]$script:CardDragStart.Y)
+        if ($dx -lt 4 -and $dy -lt 4) { return }
+        $script:CardDragMoved = $true
+        Begin-CardDrag
+    }
+    $script:CardDragLastMove = [datetime]::Now
+    if ($script:CardDragSettled) {
+        $script:CardDragSettled = $false
+        Set-CardDragLift 1.045 18 0.5
+    }
+}
+
+function Finish-CardDrag {
+    $active = $script:CardDragActive
+    $moved = $script:CardDragMoved
+    $itemId = [string]$script:CardDragItemId
+    $rect = $script:CardDragRect
+    if (-not $moved) { Clear-CardDrag; return }
+    if ($null -eq $rect) { Clear-CardDrag; return }
+    $m = Get-CardDragMinute ([double][System.Windows.Controls.Canvas]::GetTop($rect))
+    $dur = [double]$script:CardDragDur
+    if ($null -eq $m) { $m = [double]$script:CardDayStart }
+    $from = [double]$m
+    if ($from -lt [double]$script:CardDayStart) { $from = [double]$script:CardDayStart }
+    if ($from -gt ([double]$script:CardDayEnd - $dur)) { $from = [double]$script:CardDayEnd - $dur }
+    $to = $from + $dur
+    $item = $script:CardItemsById[$itemId]
+    # 落位：影子滑到吸附后的时间位置，再消失
+    $targetY = [double]$script:CardDragOriginTop + (($from - [double]$script:CardDragFromMin) * [double]$script:CardDragPx)
+    $curY = [double][System.Windows.Controls.Canvas]::GetTop($rect)
+    $anim = [System.Windows.Media.Animation.DoubleAnimation]::new($curY, $targetY, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(160)))
+    $ease = [System.Windows.Media.Animation.CubicEase]::new()
+    $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+    $anim.EasingFunction = $ease
+    # 回调跑的时候局部变量已经出栈，先把要用的值放进 $script:。
+    $script:CardDragDropId = $itemId
+    $script:CardDragDropFrom = '{0:00}:{1:00}' -f [math]::Floor($from / 60), ($from % 60)
+    $script:CardDragDropTo = '{0:00}:{1:00}' -f [math]::Floor($to / 60), ($to % 60)
+    $script:CardDragDropItem = $item
+    $anim.Add_Completed({
+        try {
+            $it = $script:CardDragDropItem
+            if ($null -ne $it) {
+                Send-OverlayEvent @{
+                    type = 'plan_update'; id = $script:CardDragDropId
+                    from = $script:CardDragDropFrom; to = $script:CardDragDropTo
+                    title = [string]$it.title; place = [string]$it.place
+                    note = [string]$it.note; priority = [string]$it.priority
+                    repeat = [string]$it.repeat
+                }
+            }
+            Write-Log ('card drag update: ' + $script:CardDragDropId + ' -> ' + $script:CardDragDropFrom + '-' + $script:CardDragDropTo)
+        } catch { }
+        Clear-CardDrag
+    })
+    $rect.BeginAnimation([System.Windows.Controls.Canvas]::TopProperty, $anim)
+}
+
 function New-CardWindow {
     $window = [System.Windows.Window]::new()
     $window.WindowStyle = [System.Windows.WindowStyle]::None
@@ -3051,7 +3302,16 @@ function New-CardWindow {
         else { $cd.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Auto) }
         [void]$stack.RowDefinitions.Add($cd)
     }
-    $root.Child = $stack
+    # 拖拽层：条目拖动时用 VisualBrush 复制一份影子，放在所有内容之上，不受 ScrollViewer 裁剪。
+    $outer = [System.Windows.Controls.Grid]::new()
+    [void]$outer.Children.Add($stack)
+    $dragLayer = [System.Windows.Controls.Canvas]::new()
+    $dragLayer.IsHitTestVisible = $false
+    $dragLayer.ClipToBounds = $false
+    [System.Windows.Controls.Panel]::SetZIndex($dragLayer, 99)
+    [void]$outer.Children.Add($dragLayer)
+    $script:CardDragLayer = $dragLayer
+    $root.Child = $outer
 
     $head = [System.Windows.Controls.Grid]::new()
     $colA = [System.Windows.Controls.ColumnDefinition]::new()
@@ -3307,6 +3567,8 @@ function New-CardWindow {
 
 function Update-Card($state) {
     if ($null -eq $script:CardWindow) { New-CardWindow }
+    # F02：拖动期间别重建条目，否则抓着的块会被 tick 换掉。
+    if ($script:CardDragActive) { return }
     try {
     $card = $state.card
     $plan = $state.plan
@@ -3395,6 +3657,10 @@ function Update-Card($state) {
     $availH = $script:WorkHeight - 96
     if ($availH -lt 240) { $availH = 240 }
     $pxPerMin = $availH / [double]($dayEndMin - $dayStartMin)
+    # F02：拖拽时按同一套时间轴换算像素，存一份给拖拽函数用。
+    $script:CardPxPerMin = $pxPerMin
+    $script:CardDayStart = $dayStartMin
+    $script:CardDayEnd = $dayEndMin
 
     # 按钮用 Border 包一层，把可点区域撑到 18x18——纯 TextBlock 只有字形大小，很难点中。
         $mkBtn = {
@@ -3455,8 +3721,11 @@ function Update-Card($state) {
         [System.Windows.Controls.Grid]::SetColumn($body, 1)
 
         $itemId = [string]$item.id
+        $body.Tag = $itemId
         $script:CardItemsById[$itemId] = $item
         $checkHandler = {
+            # 刚刚是拖动（松手改时间），别再当成打勾。
+            if ($script:CardDragMoved) { return }
             Send-OverlayEvent @{ type = 'plan_done'; id = $itemId; done = (-not $isDone) }
         }.GetNewClosure()
 
@@ -3604,6 +3873,39 @@ function Update-Card($state) {
         $bar.IsHitTestVisible = $false
         [void]$inner.Children.Add($bar)
         $body.Child = $inner
+
+        # F02：按住条目上下拖 → 改 from/to；拖 4px 以内松开仍算点击（走 checkHandler）。
+        $body.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $row = $script:CardItemsById[[string]$s.Tag]
+            $f = 0; $t = 25
+            if ($null -ne $row) {
+                if (([string]$row.from) -match '^(\d{1,2}):(\d{2})') { $f = [int]$matches[1] * 60 + [int]$matches[2] }
+                if (([string]$row.to) -match '^(\d{1,2}):(\d{2})') { $t = [int]$matches[1] * 60 + [int]$matches[2] }
+            }
+            if ($t -le $f) { $t = $f + 25 }
+            $script:CardDragFromMin = $f
+            $script:CardDragDur = $t - $f
+            # Start-CardDrag 会先 Clear（清掉 id），所以 id 要放在它后面设。
+            Start-CardDrag $s $e
+            $script:CardDragItemId = [string]$s.Tag
+            $script:CardDragDropItem = $row
+        })
+        $body.Add_PreviewMouseMove({
+            param($s, $e)
+            Update-CardDrag $s $e
+        })
+        $body.Add_PreviewMouseLeftButtonUp({
+            param($s, $e)
+            if ($script:CardDragMoved) {
+                $e.Handled = $true
+                Finish-CardDrag
+            }
+        })
+        $body.Add_LostMouseCapture({
+            param($s, $e)
+            if ($script:CardDragActive) { Finish-CardDrag }
+        })
 
         $body.Add_MouseLeftButtonUp([System.Windows.Input.MouseButtonEventHandler]$checkHandler)
         [void]$cardRow.Children.Add($body)
