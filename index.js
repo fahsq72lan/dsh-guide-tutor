@@ -3240,6 +3240,31 @@ export function apply(ctx, config = {}) {
   const planArchiveDir = path.join(dataDir, 'plan-archive')
   const planHistoryPath = path.join(dataDir, 'plan-history.json')
   const planLaterPath = path.join(dataDir, 'plan-later.json')
+  const planDeletedPath = path.join(dataDir, 'plan-deleted.json')
+  const PLAN_DELETED_TTL_MS = 24 * 60 * 60 * 1000
+
+  // B02：划掉的条目不直接消失，留 24 小时可撤回（guide_plan action=restore）。
+  function readPlanDeleted() {
+    try {
+      const data = JSON.parse(fs.readFileSync(planDeletedPath, 'utf8'))
+      const items = Array.isArray(data?.items) ? data.items : []
+      const cutoff = Date.now() - PLAN_DELETED_TTL_MS
+      return items.filter((item) => {
+        const at = Date.parse(String(item?.deletedAt || ''))
+        return Number.isFinite(at) && at >= cutoff
+      })
+    } catch {
+      return []
+    }
+  }
+
+  function writePlanDeleted(items) {
+    try {
+      fs.writeFileSync(planDeletedPath, JSON.stringify({ items }, null, 2), 'utf8')
+    } catch (error) {
+      log(`plan-deleted write failed: ${error?.message ?? error}`)
+    }
+  }
 
   const PLAN_TONE = {
     strict: '严厉，短句，不容商量',
@@ -3725,13 +3750,71 @@ export function apply(ctx, config = {}) {
     if (action === 'remove') {
       const id = String(args.id || '')
       const plan = planForToday()
-      const before = plan.items.length
-      plan.items = plan.items.filter((item) => item.id !== id)
-      if (plan.items.length === before) return { ok: false, error: `没有 id=${id} 这一项` }
+      const item = plan.items.find((it) => it.id === id)
+      if (!item) return { ok: false, error: `没有 id=${id} 这一项` }
+      plan.items = plan.items.filter((it) => it.id !== id)
       savePlanFile(plan)
       pushPlanState(plan)
-      appendDaylog('note', args.note ? `清单划掉：${args.note}` : '清单划掉一条')
-      return { ok: true, plan: planSummary(plan) }
+      const deleted = readPlanDeleted()
+      deleted.push({
+        ...item,
+        deletedAt: new Date().toISOString(),
+        deletedFrom: plan.date || todayKey(new Date()),
+      })
+      writePlanDeleted(deleted)
+      const full = `${item.from || '随时'}${item.to ? `-${item.to}` : ''}${item.place ? ` @${item.place}` : ''} ${item.title}`
+      appendDaylog('note', args.note ? `清单划掉：${args.note}｜${full}` : `清单划掉：${full}`, {
+        item: { id: item.id, from: item.from, to: item.to, place: item.place, title: item.title },
+      })
+      return {
+        ok: true,
+        plan: planSummary(plan),
+        removed: { id: item.id, from: item.from, to: item.to, place: item.place, title: item.title },
+        restoreHint: `24 小时内可用 guide_plan action=restore id=${item.id} 撤回`,
+      }
+    }
+    if (action === 'restore') {
+      const id = String(args.id || '')
+      const deleted = readPlanDeleted()
+      if (!id) {
+        return {
+          ok: true,
+          recent: deleted.map((it) => ({
+            id: it.id,
+            from: it.from,
+            to: it.to,
+            place: it.place,
+            title: it.title,
+            deletedAt: it.deletedAt,
+          })),
+          hint: '给 id 就能恢复；只保留最近 24 小时的删除',
+        }
+      }
+      const idx = deleted.findIndex((it) => String(it.id) === id)
+      if (idx < 0) return { ok: false, error: `最近 24 小时没有 id=${id} 的删除记录` }
+      const [dead] = deleted.splice(idx, 1)
+      writePlanDeleted(deleted)
+      const plan = planForToday()
+      const restore = { ...dead }
+      delete restore.deletedAt
+      delete restore.deletedFrom
+      if (plan.items.some((it) => it.id === restore.id)) restore.id = `t${Date.now().toString(36)}`
+      plan.items.push({
+        ...restore,
+        done: Boolean(restore.done),
+        doneAt: restore.doneAt || null,
+        remindedAt: null,
+        nudgedAt: null,
+      })
+      plan.items.sort((a, b) => (planMinutes(a.from) ?? 9999) - (planMinutes(b.from) ?? 9999))
+      savePlanFile(plan)
+      pushPlanState(plan)
+      appendDaylog('note', `清单恢复：${restore.from}-${restore.to} ${restore.title}`)
+      return {
+        ok: true,
+        restored: { id: restore.id, from: restore.from, to: restore.to, place: restore.place, title: restore.title },
+        plan: planSummary(plan),
+      }
     }
     if (action === 'done' || action === 'undo') {
       const id = String(args.id || '')
@@ -3739,11 +3822,26 @@ export function apply(ctx, config = {}) {
       return { ok: true, plan: planSummary() }
     }
     if (action === 'clear') {
+      if (!args.confirm) {
+        const plan = planForToday()
+        return {
+          ok: false,
+          need: ['confirm'],
+          error: `清空会一次删掉 ${plan.items.length} 条，确认请带 confirm=true`,
+        }
+      }
       const plan = planForToday()
+      const deleted = readPlanDeleted()
+      const nowIso = new Date().toISOString()
+      for (const item of plan.items) {
+        deleted.push({ ...item, deletedAt: nowIso, deletedFrom: plan.date || todayKey(new Date()) })
+      }
+      writePlanDeleted(deleted)
       plan.items = []
       savePlanFile(plan)
       pushPlanState(plan)
-      return { ok: true, plan: planSummary() }
+      appendDaylog('note', `清单清空：${deleted.length} 条可在 24 小时内 restore`)
+      return { ok: true, plan: planSummary(), removed: deleted.length }
     }
     if (action === 'show' || action === 'hide') {
       writeState({ card: { visible: action === 'show' } })
@@ -3767,12 +3865,12 @@ export function apply(ctx, config = {}) {
   const guidePlanTool = {
     name: 'guide_plan',
     description:
-      '「桌面清单」：把目标排成今天的清单（几点到几点、在哪、做什么），显示在桌面卡片上。list=看清单；add=加一条（from/to 用 HH:mm、place、title，或直接给 text 一句话）；remove=划掉；done/undo=打勾；clear=清空；show/hide=显示或收起卡片；auto=拿目标和课表去排。',
+      '「桌面清单」：把目标排成今天的清单（几点到几点、在哪、做什么），显示在桌面卡片上。list=看清单；add=加一条（from/to 用 HH:mm、place、title，或直接给 text 一句话）；remove=划掉（24 小时内可 restore）；restore=撤回删掉的条目（不带 id 则列出最近删除）；done/undo=打勾；clear=清空（必须带 confirm=true）；show/hide=显示或收起卡片；auto=拿目标和课表去排。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', description: 'list / add / remove / done / undo / clear / show / hide / auto' },
-        id: { type: 'string', description: 'remove/done/undo：条目 id' },
+        action: { type: 'string', description: 'list / add / remove / restore / done / undo / clear / show / hide / auto' },
+        id: { type: 'string', description: 'remove/restore/done/undo：条目 id' },
         from: { type: 'string', description: 'add：开始时间 HH:mm' },
         to: { type: 'string', description: 'add：结束时间 HH:mm' },
         text: { type: 'string', description: 'add：一句话加任务，如「明天下午三点在图书馆复习概率论」；解析成 from/to/place/title' },
@@ -3780,6 +3878,7 @@ export function apply(ctx, config = {}) {
         title: { type: 'string', description: 'add：做什么，≤18 字，具体到能动手' },
         goalId: { type: 'string', description: 'add：对应哪个目标（可选）' },
         note: { type: 'string', description: 'remove：为什么划掉' },
+        confirm: { type: 'boolean', description: 'clear：必须为 true 才真的清空' },
       },
       required: ['action'],
       additionalProperties: false,
@@ -3790,6 +3889,17 @@ export function apply(ctx, config = {}) {
         if (value.error) {
           const need = Array.isArray(value.need) && value.need.length ? `（缺 ${value.need.join('、')}）` : ''
           return [{ type: 'text', text: `没成：${value.error}${need}` }]
+        }
+        if (Array.isArray(value.recent)) {
+          const lines = value.recent.length
+            ? value.recent
+                .map((it) => `${it.from || '随时'}${it.to ? `-${it.to}` : ''}${it.place ? ` @${it.place}` : ''} ${it.title}（删除于 ${it.deletedAt}）`)
+                .join('\n')
+            : '最近 24 小时没有删除记录'
+          return [{ type: 'text', text: `${value.hint}\n\n${lines}` }]
+        }
+        if (value.restored) {
+          return [{ type: 'text', text: `已恢复：${value.restored.from}-${value.restored.to} ${value.restored.title}\n\n当前清单：\n${value.plan}` }]
         }
         if (value.hint) {
           return [{ type: 'text', text: `${value.hint}\n\n现在是 ${value.now}\n课表：${value.classes}\n\n当前清单：\n${value.plan}` }]

@@ -3384,16 +3384,24 @@ function Update-Card($state) {
         $cross.Add_PreviewMouseLeftButtonUp({
             param($s, $e)
             $e.Handled = $true
-            # 防抖：卡片每轮刷新都会重建按钮，窗口重建时可能补发一次 MouseUp，
-            # 鼠标停在叉上就会连着删掉好几条（真丢过两次）。1.2 秒内只认一次。
+            # B01：第一次点只「上膛」，2.5 秒内再点同一条才真删。
+            # 旧版 1.2 秒防抖根本挡不住误触，日志里三次连删 4–5 条就是它。
+            if ($null -eq $script:DeleteArmed) { $script:DeleteArmed = @{} }
+            $id = [string]$s.Tag
             $nowDel = Get-Date
-            if ($null -ne $script:LastDeleteAt -and ($nowDel - $script:LastDeleteAt).TotalMilliseconds -lt 1200) {
-                Write-Log ('delete ignored (debounce): ' + [string]$s.Tag)
+            $armedAt = $null
+            if ($script:DeleteArmed.ContainsKey($id)) { $armedAt = $script:DeleteArmed[$id] }
+            if ($null -ne $armedAt -and ($nowDel - $armedAt).TotalMilliseconds -le 2500) {
+                $script:DeleteArmed.Remove($id)
+                Write-Log ('delete confirmed: ' + $id)
+                Send-OverlayEvent @{ type = 'plan_remove'; id = $id }
                 return
             }
-            $script:LastDeleteAt = $nowDel
-            Write-Log ('delete button clicked: ' + [string]$s.Tag)
-            Send-OverlayEvent @{ type = 'plan_remove'; id = [string]$s.Tag }
+            $script:DeleteArmed[$id] = $nowDel
+            Write-Log ('delete armed: ' + $id)
+            $s.Child.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 255, 92, 92))
+            $s.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(60, 255, 80, 80))
+            $s.ToolTip = '再点一次才真的删（2.5 秒内）'
         })
 
         [void]$acts.Children.Add($pencil)

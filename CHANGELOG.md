@@ -1626,3 +1626,28 @@ B06 已随 v0.22.3 修复并实测，表内状态滞后；用户 m02972 要求�
 ### 怎么恢复
 - 表：`git checkout -- 打磨计划-2026-11.xlsx planning/打磨计划-2026-11.xlsx`。
 - HANDOFF：`git checkout -- HANDOFF.md`。
+
+## 2026-11-10 09:58 清单删除加二次确认与 24 小时撤回（B01/B02/B03）
+
+### 改了什么
+- `native/overlay.ps1`：卡片每条右侧「✕」改为两段式——第一次点只变红「上膛」，2.5 秒内再点同一条才发 `plan_remove`；删掉原 1.2 秒防抖（它挡不住误触）。约 +18/−8 行。
+- `index.js`：
+  - 新增 `plan-deleted.json`（`planDeletedPath`）与 `readPlanDeleted()` / `writePlanDeleted()`，只保留 24 小时内删除。
+  - `planRun` 的 `remove` 分支：删前把完整条目（id/from/to/place/title/done…）写进 `plan-deleted.json`，daylog 也带 `item` 字段；返回 `removed` 与 `restoreHint`。
+  - 新增 `restore` 分支：给 id 恢复；不给 id 返回最近删除列表。
+  - `clear` 必须带 `confirm=true`，并把清空条目写进软删除。
+  - 工具 schema 加 `restore`、`confirm`，render 支持删除列表与恢复回显。
+- `package.json` 0.22.3 → 0.22.4。
+
+### 为什么
+B01/B02：删除单击即删、日志不记内容，已发生三次成片误删（16:33/16:58/17:30 各 4–5 条）。B03 的 11-09 四条已随换天过期，不需要恢复。
+
+### 怎么验证
+- `node --check index.js` 通过；`Parser::ParseFile` → `PARSE OK: overlay.ps1`。
+- 热重载 01:56:44（overlay pid 274072）。
+- API 实测：remove → `plan-deleted.json` 有完整条目 + daylog 带 item；`GET /plan?action=restore` 列出；restore 后清单回到 3 条；`clear` 无 confirm 被拒且清单不变。
+- 待人工：卡片上点一次 ✕ 变红、再点一次才删。
+
+### 怎么恢复
+- 代码：`git revert` 对应提交。
+- 数据：`plan-deleted.json` 删掉即可清空撤回池；误删条目用 `guide_plan action=restore id=...`。
