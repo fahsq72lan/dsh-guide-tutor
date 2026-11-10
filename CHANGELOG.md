@@ -2120,3 +2120,23 @@ F02：在卡片上按住条目上下拖，比点 ✎ 弹窗快得多；用户（
 
 ### 怎么恢复
 - `git revert` 本次提交。
+
+## 2026-11-10 16:18 同步 U 盘副本到 v0.22.26
+
+### 改了什么
+- `E:\dsh插件\guide-tutor` 从 **0.21.0** 更新到 **0.22.26**；旧目录改名为 `E:\dsh插件\guide-tutor.old-20261110`（可整目录回退）。
+- `robocopy` 全量覆盖：418 文件 / 134.63 MB，0 失败；排除 `.git`、`tmp`、`node_modules`、`__pycache__`。
+- 新增内容随包带上：`lib/` 9 个模块（log/state/video/kb/focus/camera/edict/plan/plan-parse）、`tools/` 3 个脚本（probe-subtitle.cjs、smoke-plan.mjs、smoke-video.mjs）、`planning/` 三件套（打磨表 xlsx/md + 生成脚本）、`models/` 14 文件。
+
+### 为什么
+用户要求把 U 盘上的插件版本更新到当前版本，方便换机/备份。
+
+### 怎么验证
+- `package.json` 版本 `0.22.26`；`index.js` 111,377 B。
+- `models`：本地与 U 盘均 14 文件 / 83,407,459 B，一致。
+- `native` 8 文件、`tools` 3 文件、`lib` 9 文件、`planning\打磨计划-2026-11.xlsx` 存在。
+- `robocopy` 退出码 1（有文件复制，非错误）；Files 418 Copied 418 FAILED 0。
+
+### 怎么恢复
+- 退回上一版：删掉 `E:\dsh插件\guide-tutor`，把 `E:\dsh插件\guide-tutor.old-20261110` 改回 `guide-tutor`。
+- 更早的 0.6.0：`E:\dsh插件\guide-tutor.old-20261109`。
