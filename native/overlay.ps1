@@ -3072,6 +3072,9 @@ function New-CardWindow {
     $date.FontSize = 10.5
     $date.Margin = [System.Windows.Thickness]::new(8, 1, 0, 0)
     $date.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $date.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+    $date.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+    $date.MaxWidth = 130
     $date.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 255, 255, 255))
     [void]$headText.Children.Add($title)
     [void]$headText.Children.Add($date)
@@ -3382,7 +3385,9 @@ function Update-Card($state) {
     }
     $scheduled = @($scheduled | Sort-Object From)
 
-    $script:CardDate.Text = '{0} · {1}/{2}' -f [string]$plan.date, $doneCount, $total
+    # 标题栏空间有限：日期去掉年份，只留 MM-dd，避免和右侧按钮挤在一起。
+    $shortDate = ([string]$plan.date) -replace '^\d{4}-', ''
+    $script:CardDate.Text = '{0} · {1}/{2}' -f $shortDate, $doneCount, $total
     $script:CardItems.Children.Clear()
 
     # 时间轴按真实时间排：有安排的地方画成实块（高度按真实时长等比拉伸），空档用半点格填。
