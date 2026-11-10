@@ -2583,19 +2583,58 @@ function Show-AddTaskWindow {
     $priName.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
     [System.Windows.Controls.Grid]::SetColumn($priName, 0)
     [void]$priRow.Children.Add($priName)
-    $priBox = [System.Windows.Controls.ComboBox]::new()
-    $priBox.ItemsSource = @('不设', 'P0 最高', 'P1 高', 'P2 中', 'P3 低')
-    $priBox.SelectedIndex = 0
-    if ($initPri -eq 'P0') { $priBox.SelectedIndex = 1 }
-    elseif ($initPri -eq 'P1') { $priBox.SelectedIndex = 2 }
-    elseif ($initPri -eq 'P2') { $priBox.SelectedIndex = 3 }
-    elseif ($initPri -eq 'P3') { $priBox.SelectedIndex = 4 }
-    $priBox.FontSize = 12
-    $priBox.Height = 26
-    $priBox.Padding = [System.Windows.Thickness]::new(6, 2, 6, 2)
-    $priBox.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 32, 36, 44))
-    $priBox.Foreground = [System.Windows.Media.Brushes]::White
-    $priBox.ToolTip = 'P0 最急，P3 最低；颜色显示在卡片底部'
+    # 优先级用一排自绘小块，不用 ComboBox：WPF 默认下拉是白底白字，深色窗口里看不清。
+    $priBox = [System.Windows.Controls.StackPanel]::new()
+    $priBox.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $priBox.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $script:AddFrmPriValue = [string]$initPri
+    $script:AddFrmPriBtns = @()
+    $priDefs = @(
+        @{ v = ''; t = '不设'; c = [System.Windows.Media.Color]::FromArgb(150, 255, 255, 255) },
+        @{ v = 'P0'; t = 'P0'; c = [System.Windows.Media.Color]::FromArgb(230, 229, 72, 77) },
+        @{ v = 'P1'; t = 'P1'; c = [System.Windows.Media.Color]::FromArgb(230, 245, 165, 36) },
+        @{ v = 'P2'; t = 'P2'; c = [System.Windows.Media.Color]::FromArgb(210, 76, 141, 255) },
+        @{ v = 'P3'; t = 'P3'; c = [System.Windows.Media.Color]::FromArgb(210, 48, 164, 108) }
+    )
+    $priPaint = {
+        param($chip, $on)
+        $cc = [System.Windows.Media.Color]$chip.Tag2
+        if ($on) {
+            $chip.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(70, $cc.R, $cc.G, $cc.B))
+            $chip.BorderBrush = [System.Windows.Media.SolidColorBrush]::new($cc)
+        } else {
+            $chip.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 32, 36, 44))
+            $chip.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(40, 255, 255, 255))
+        }
+    }
+    $script:AddFrmPriPaint = $priPaint
+    foreach ($d in $priDefs) {
+        $chip = [System.Windows.Controls.Border]::new()
+        $chip.Width = 44
+        $chip.Height = 24
+        $chip.Margin = [System.Windows.Thickness]::new(0, 0, 6, 0)
+        $chip.CornerRadius = [System.Windows.CornerRadius]::new(5)
+        $chip.BorderThickness = [System.Windows.Thickness]::new(1)
+        $chip.Cursor = [System.Windows.Input.Cursors]::Hand
+        $chip.Tag = [string]$d.v
+        $chip.Tag2 = $d.c
+        $chipText = [System.Windows.Controls.TextBlock]::new()
+        $chipText.Text = [string]$d.t
+        $chipText.FontSize = 11
+        $chipText.Foreground = [System.Windows.Media.Brushes]::White
+        $chipText.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+        $chipText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $chip.Child = $chipText
+        $chip.Add_PreviewMouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            $script:AddFrmPriValue = [string]$s.Tag
+            foreach ($b in $script:AddFrmPriBtns) { & $script:AddFrmPriPaint $b ([string]$b.Tag -eq $script:AddFrmPriValue) }
+        })
+        [void]$priBox.Children.Add($chip)
+        $script:AddFrmPriBtns += $chip
+        & $priPaint $chip ([string]$d.v -eq $script:AddFrmPriValue)
+    }
     [System.Windows.Controls.Grid]::SetColumn($priBox, 1)
     [void]$priRow.Children.Add($priBox)
     [void]$stack.Children.Add($priRow)
@@ -2606,7 +2645,6 @@ function Show-AddTaskWindow {
     $script:AddFrmPlace = $fPlace.Box
     $script:AddFrmTitle = $fTitle.Box
     $script:AddFrmNote = $fNote.Box
-    $script:AddFrmPri = $priBox
 
     $err = [System.Windows.Controls.TextBlock]::new()
     $err.FontSize = 11
@@ -2642,8 +2680,7 @@ function Show-AddTaskWindow {
             $to = ([string]$script:AddFrmTo.Text).Trim()
             $place = ([string]$script:AddFrmPlace.Text).Trim()
             $note = ([string]$script:AddFrmNote.Text).Trim()
-            $priIndex = [int]$script:AddFrmPri.SelectedIndex
-            $pri = @('', 'P0', 'P1', 'P2', 'P3')[$priIndex]
+            $pri = [string]$script:AddFrmPriValue
             $bad = $null
             if ($title -eq '') { $bad = '做什么不能空着。' }
             elseif ($from -notmatch '^([01]?\d|2[0-3]):[0-5]\d$') { $bad = '开始时间要写成 HH:mm，例如 14:00。' }

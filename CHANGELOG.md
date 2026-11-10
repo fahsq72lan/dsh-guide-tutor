@@ -1860,3 +1860,19 @@ F05 原本把备注、颜色、子任务捆在一起。备注与颜色成本低�
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.11 -- native/overlay.ps1`。
 - 表：`tmp\打磨计划-before-f05a2-root.xlsx` / `-planning.xlsx` 覆盖回去。
+
+## 2026-11-10 11:40 优先级选择改用自绘小块
+
+### 改了什么
+- `native/overlay.ps1` `Show-AddTaskWindow` 里的优先级 `ComboBox` 换成五个自绘 `Border` 小块（不设 / P0 / P1 / P2 / P3，各 44×24、深底、选中时填充对应色），事件通过 `$script:AddFrmPriValue` 回传，避免闭包变量出栈。
+- 保存逻辑改用 `$script:AddFrmPriValue`，不再读 `ComboBox.SelectedIndex`。
+
+### 为什么
+用户反馈：WPF 默认下拉是白底白字，在深色窗口里看不清（截图里「P1 高」白字白底）。
+
+### 怎么验证
+- `PS parse OK`；BOM `EF BB BF`、无 CRLF；`guide_overlay restart` 成功。
+- 打开编辑窗口应看到五个深色小块，选中项带颜色描边。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.12 -- native/overlay.ps1`。
