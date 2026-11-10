@@ -2046,3 +2046,22 @@ F02：在卡片上按住条目上下拖，比点 ✎ 弹窗快得多；用户（
 
 ### 怎么恢复
 - `git revert` 本次提交；把 `$body.Opacity` 改回 `0.22`、删掉 `$anim` 的第二段即可回到上一版。
+
+## 2026-11-10 13:35 F02 拖拽重做：只拖原块，松手压扁回弹
+
+### 改了什么
+- `native/overlay.ps1` 拖拽段整体重写：去掉 VisualBrush 拖影层，改为直接给原条目加 `TransformGroup`（`ScaleTransform` + `TranslateTransform`），按住后条目自己跟手走。
+- `Get-CardDragMinute` 的基准改为 `$script:CardDragBaseY`（初始位置），不再用 `TranslatePoint` 读会被变换改掉的坐标。
+- `Finish-CardDrag`：松手后 `TranslateTransform.Y` 用 230ms `CubicEaseOut` 滑到新行；`Completed` 后 140ms 压扁到 `ScaleY 0.92`、330ms 回弹到 1.0（`BackEase`），结束才发 `plan_update` 并重建。
+- 拖动期间 `Update-Card` 继续 early return；timer 只负责边缘自动滚动、停手 180ms 的浮起收势与时间徽标，不再改位置。
+
+### 为什么
+用户看到的「两个虚影」是跟手拖影 + 原位半透明占位；松手后拖影被清掉、原位块被重建，视觉上就是「一瞬间掉下去」。改成只动原块后，屏幕上始终只有一块。
+
+### 怎么验证
+- `PS parse OK`、BOM `EF BB BF`、LF 正常；`guide_overlay restart` 无报错。
+- 实机拖动 14:00–15:40 → 15:15–16:55：`drag start` / `drag begin` / `drag land: from=557 target=557 min=915` / `card drag update: tmwa0clo4 -> 15:15-16:55`；拖动中截屏只有一个块跟手，原位留空，不再有第二个虚影。
+- 测试后已改回 14:00–15:40 并撤销误置的完成状态。
+
+### 怎么恢复
+- `git revert` 本次提交；或从 `103af57` 取回上一版 `native/overlay.ps1`。
