@@ -1731,3 +1731,20 @@ T01：专注环是纯本地定时器，只依赖目录、日志、语音和课�
 
 ### 怎么恢复
 - `git revert <本次提交>`，或 `git checkout v0.22.6 -- index.js lib/focus.js`。
+
+## 2026-11-10 10:24 T01 第六刀：拆出 lib/camera.js
+
+### 改了什么
+- 新增 `lib/camera.js`（约 380 行）：`createCamera({ dataDir, nativeDir, shotsDir, log, broadcast, appendDaylog, pickAgent, buildUserMessage, mutedSpeakMessages })`，返回 `{ tool, tick, run, status, snap }`；抓图串行队列、指纹比对、待看队列、清理策略全部搬入。
+- `index.js`：删原 camera 段 354 行，改 `import { createCamera }`、`const camera = createCamera(...)`、`const guideCameraTool = camera.tool`；tick 调用改 `camera.tick()`。4,084 → 3,743 行。
+
+### 为什么
+T01：摄像头巡检与清单、语音、目标互不共享写状态，依赖只有目录、日志、唤醒投递，拆出后可用 `status/pending` 直接验。
+
+### 怎么验证
+- `node --check index.js`、`node --check lib/camera.js` 通过。
+- 重载：`plugin.log` 02:10:09.834 `disposed` → 02:10:10.035 `ready`。
+- 实调 `guide_camera`：status 返回「巡检：开，每 120 分钟…待看 20 张」；pending 返回 20 条旧记录，路径与时间正常。
+
+### 怎么恢复
+- `git revert <本次提交>`，或 `git checkout v0.22.7 -- index.js lib/camera.js`。
