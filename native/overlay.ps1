@@ -3108,7 +3108,7 @@ function Begin-CardDrag {
         $script:CardDragPx = [double]$script:CardPxPerMin
     } else { $script:CardDragPx = 1.0 }
     $script:CardDragGrab = [System.Windows.Point]::new($script:CardDragMouse.X - $pos.X, $script:CardDragMouse.Y - $pos.Y)
-    $body.Opacity = 0.22
+    $body.Opacity = 0.5
     try { [void]$body.CaptureMouse() } catch { }
     Set-CardDragLift 1.045 18 0.5
     Start-CardDragTimer
@@ -3221,6 +3221,23 @@ function Update-CardDrag($body, $e) {
     }
 }
 
+function Complete-CardDragDrop {
+    try {
+        $it = $script:CardDragDropItem
+        if ($null -ne $it) {
+            Send-OverlayEvent @{
+                type = 'plan_update'; id = $script:CardDragDropId
+                from = $script:CardDragDropFrom; to = $script:CardDragDropTo
+                title = [string]$it.title; place = [string]$it.place
+                note = [string]$it.note; priority = [string]$it.priority
+                repeat = [string]$it.repeat
+            }
+        }
+        Write-Log ('card drag update: ' + $script:CardDragDropId + ' -> ' + $script:CardDragDropFrom + '-' + $script:CardDragDropTo)
+    } catch { }
+    Clear-CardDrag
+}
+
 function Finish-CardDrag {
     $active = $script:CardDragActive
     $moved = $script:CardDragMoved
@@ -3249,20 +3266,23 @@ function Finish-CardDrag {
     $script:CardDragDropTo = '{0:00}:{1:00}' -f [math]::Floor($to / 60), ($to % 60)
     $script:CardDragDropItem = $item
     $anim.Add_Completed({
-        try {
-            $it = $script:CardDragDropItem
-            if ($null -ne $it) {
-                Send-OverlayEvent @{
-                    type = 'plan_update'; id = $script:CardDragDropId
-                    from = $script:CardDragDropFrom; to = $script:CardDragDropTo
-                    title = [string]$it.title; place = [string]$it.place
-                    note = [string]$it.note; priority = [string]$it.priority
-                    repeat = [string]$it.repeat
-                }
-            }
-            Write-Log ('card drag update: ' + $script:CardDragDropId + ' -> ' + $script:CardDragDropFrom + '-' + $script:CardDragDropTo)
-        } catch { }
-        Clear-CardDrag
+        # 第二段：放下——缩小 + 淡出，别让影子凭空消失。
+        $rc = $script:CardDragRect
+        if ($null -eq $rc) { Complete-CardDragDrop; return }
+        $dur2 = [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(130))
+        if ($null -ne $script:CardDragScale) {
+            $ease2 = [System.Windows.Media.Animation.CubicEase]::new()
+            $ease2.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseIn
+            $sx2 = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragScale.ScaleX, 1.0, $dur2)
+            $sx2.EasingFunction = $ease2
+            $sy2 = [System.Windows.Media.Animation.DoubleAnimation]::new([double]$script:CardDragScale.ScaleY, 1.0, $dur2)
+            $sy2.EasingFunction = $ease2
+            $script:CardDragScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $sx2)
+            $script:CardDragScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $sy2)
+        }
+        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(0.99, 0.0, $dur2)
+        $fade.Add_Completed({ Complete-CardDragDrop })
+        $rc.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $fade)
     })
     $rect.BeginAnimation([System.Windows.Controls.Canvas]::TopProperty, $anim)
 }
