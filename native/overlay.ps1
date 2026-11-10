@@ -2248,6 +2248,20 @@ function Adjust-UiScale([double]$deltaPercent) {
 # --- plan history ---------------------------------------------------------
 # 「历史」按钮：按天回看清单。数据由插件写进 plan-history.json，这里只读。
 # 卡片只管今天；昨天/前天的清单要能翻出来，靠的就是这份归档。
+# 「昨天 / 前天 / N 天前」：让历史里的日期一眼能对上日子。
+function Get-PlanDayLabel($dateStr) {
+    try {
+        $d = [datetime]::ParseExact([string]$dateStr, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+        $n = ([datetime]::Now.Date - $d.Date).Days
+        if ($n -lt 0) { return '' }
+        if ($n -eq 0) { return '今天' }
+        if ($n -eq 1) { return '昨天' }
+        if ($n -eq 2) { return '前天' }
+        if ($n -le 6) { return ('{0} 天前' -f $n) }
+        return ''
+    } catch { return '' }
+}
+
 function New-HistoryDayButton($day) {
     $btn = [System.Windows.Controls.Border]::new()
     $btn.CornerRadius = [System.Windows.CornerRadius]::new(8)
@@ -2265,9 +2279,17 @@ function New-HistoryDayButton($day) {
     [void]$grid.ColumnDefinitions.Add($c1)
 
     $d = [System.Windows.Controls.TextBlock]::new()
-    $d.Text = [string]$day.date
     $d.FontSize = 12.5
+    $d.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
     $d.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 255, 255, 255))
+    [void]$d.Inlines.Add([System.Windows.Documents.Run]::new([string]$day.date))
+    $rel = Get-PlanDayLabel $day.date
+    if (-not [string]::IsNullOrWhiteSpace($rel)) {
+        $runRel = [System.Windows.Documents.Run]::new('　' + $rel)
+        $runRel.FontSize = 10.5
+        $runRel.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(175, 255, 196, 120))
+        [void]$d.Inlines.Add($runRel)
+    }
     [System.Windows.Controls.Grid]::SetColumn($d, 0)
     [void]$grid.Children.Add($d)
 
@@ -2286,7 +2308,12 @@ function New-HistoryDayButton($day) {
 function Show-PlanDayDetail($day, $detailPanel) {
         $detailPanel.Children.Clear()
         $head = [System.Windows.Controls.TextBlock]::new()
-        $head.Text = ('{0}　完成 {1}/{2}' -f $day.date, [int]$day.done, [int]$day.total)
+        $rel = Get-PlanDayLabel $day.date
+        if ([string]::IsNullOrWhiteSpace($rel)) {
+            $head.Text = ('{0}　完成 {1}/{2}' -f $day.date, [int]$day.done, [int]$day.total)
+        } else {
+            $head.Text = ('{0}（{1}）　完成 {2}/{3}' -f $day.date, $rel, [int]$day.done, [int]$day.total)
+        }
         $head.FontSize = 13
         $head.FontWeight = [System.Windows.FontWeights]::SemiBold
         $head.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
@@ -2378,7 +2405,7 @@ function Show-PlanHistoryWindow {
 
     $win = [System.Windows.Window]::new()
     $win.Title = ('教学助手 · 清单历史（{0} 天）' -f $days.Count)
-    $win.Width = 660
+    $win.Width = 700
     $win.Height = 520
     $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
     $win.Topmost = $true
@@ -2389,7 +2416,7 @@ function Show-PlanHistoryWindow {
     $root = [System.Windows.Controls.Grid]::new()
     $root.Margin = [System.Windows.Thickness]::new(14, 12, 14, 12)
     $rc0 = [System.Windows.Controls.ColumnDefinition]::new()
-    $rc0.Width = [System.Windows.GridLength]::new(170, [System.Windows.GridUnitType]::Pixel)
+    $rc0.Width = [System.Windows.GridLength]::new(205, [System.Windows.GridUnitType]::Pixel)
     $rc1 = [System.Windows.Controls.ColumnDefinition]::new()
     $rc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
     [void]$root.ColumnDefinitions.Add($rc0)
