@@ -1,6 +1,6 @@
 {
     "name":  "@local/dsh-guide-tutor",
-    "version": "0.22.2",
+    "version": "0.22.3",
     "private":  true,
     "type":  "module",
     "description":  "Screen tutor: floating bubble, desktop capture, on-screen arrows/circles and a translucent step panel, plus a local step-file knowledge base.",

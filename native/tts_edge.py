@@ -21,7 +21,9 @@ DEFAULT_VOICE = "zh-CN-XiaoxiaoNeural"
 
 
 def emit(payload):
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    # ensure_ascii=True：路径里可能有中文用户名，输出纯 ASCII 的 \\uXXXX，
+    # 就不会被 Windows 控制台代码页（GBK）二次编码成乱码。
+    sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
     sys.stdout.flush()
 
 

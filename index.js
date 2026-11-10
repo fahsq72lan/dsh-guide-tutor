@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import fs from 'node:fs'
 import { createServer } from 'node:http'
 import os from 'node:os'
@@ -1423,6 +1423,76 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  // 语音缓存：同一句第二次播放直接读 mp3，不用再起 python 去等 edge。
+  const ttsCacheDir = path.join(dataDir, 'tts-cache')
+  try {
+    fs.mkdirSync(ttsCacheDir, { recursive: true })
+  } catch {
+    /* 缓存目录建不出来就退化成现合现播 */
+  }
+  const speechPrefetching = new Set()
+
+  function ttsCacheFile(text) {
+    const voice = String(config.edgeVoice || 'zh-CN-XiaoxiaoNeural')
+    const seed = `${text}|${voice}|${speechSettings.rate}|${speechSettings.volume}`
+    return path.join(ttsCacheDir, `${createHash('sha256').update(seed).digest('hex').slice(0, 20)}.mp3`)
+  }
+
+  // 播放当前句时顺手把下一句合出来，轮到它时直接命中缓存。
+  function prefetchSpeech(text) {
+    if (!text || disposed) return
+    let target
+    try {
+      target = ttsCacheFile(text)
+    } catch {
+      return
+    }
+    try {
+      if (fs.statSync(target).size > 800) return
+    } catch {
+      /* 还没缓存 */
+    }
+    if (speechPrefetching.has(target)) return
+    const script = path.join(NATIVE_DIR, 'tts_edge.py')
+    if (!fs.existsSync(script)) return
+    const voice = String(config.edgeVoice || 'zh-CN-XiaoxiaoNeural')
+    speechPrefetching.add(target)
+    const tmp = `${target}.${Date.now()}.tmp`
+    const finish = (code) => {
+      speechPrefetching.delete(target)
+      try {
+        if (code === 0 && fs.statSync(tmp).size > 800) fs.renameSync(tmp, target)
+        else fs.rmSync(tmp, { force: true })
+      } catch {
+        try {
+          fs.rmSync(tmp, { force: true })
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    try {
+      const child = spawn(
+        pythonCommand(),
+        [script, '--out', tmp, '--rate', String(speechSettings.rate), '--volume', String(speechSettings.volume)],
+        {
+          windowsHide: true,
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            GUIDE_TTS_TEXT: text,
+            GUIDE_TTS_VOICE: voice,
+            PYTHONPATH: path.join(HERE, 'py', 'libs') + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : ''),
+          },
+        },
+      )
+      child.on('exit', finish)
+      child.on('error', () => finish(-1))
+    } catch {
+      speechPrefetching.delete(target)
+    }
+  }
+
   function setSubtitleSize(size) {
     const value = Math.max(14, Math.min(48, Math.round(Number(size) || DEFAULT_SPEECH.subtitleSize)))
     speechSettings.subtitleSize = value
@@ -1512,6 +1582,7 @@ export function apply(ctx, config = {}) {
           GUIDE_TTS_ENGINE: String(config.ttsEngine || 'edge'),
           GUIDE_TTS_EDGE_VOICE: String(config.edgeVoice || 'zh-CN-XiaoxiaoNeural'),
           GUIDE_TTS_PYTHON: pythonCommand(),
+          GUIDE_TTS_CACHE: ttsCacheDir,
         },
       })
     } catch (error) {
@@ -1520,6 +1591,7 @@ export function apply(ctx, config = {}) {
       return null
     }
     ttsChild = child
+    if (speechQueue.length) prefetchSpeech(speechQueue[0])
     let advanced = false
     const advance = (delay) => {
       if (advanced) return

@@ -53,7 +53,6 @@ function Invoke-EdgeTts {
     $synth = Join-Path $PSScriptRoot 'tts_edge.py'
     if (-not (Test-Path $synth)) { return $false }
 
-    $out = Join-Path $env:TEMP ('guide-tts-' + [guid]::NewGuid().ToString('N') + '.mp3')
     $libs = Join-Path (Split-Path $PSScriptRoot -Parent) 'py\libs'
 
     $prevPythonPath = $env:PYTHONPATH
@@ -61,23 +60,70 @@ function Invoke-EdgeTts {
     $env:PYTHONPATH = if ($prevPythonPath) { $libs + [IO.Path]::PathSeparator + $prevPythonPath } else { $libs }
     if ($env:GUIDE_TTS_EDGE_VOICE) { $env:GUIDE_TTS_VOICE = $env:GUIDE_TTS_EDGE_VOICE }
 
+    # 合成结果按（文本|音色|语速|音量）缓存：同一句第二次播放直接读 mp3，
+    # 不再起 python、不再等 edge 连接，起播通常在几十毫秒内。
+    $voiceForCache = if ($env:GUIDE_TTS_EDGE_VOICE) { $env:GUIDE_TTS_EDGE_VOICE } else { $Voice }
+    $cacheDir = $env:GUIDE_TTS_CACHE
+    if ([string]::IsNullOrWhiteSpace($cacheDir)) { $cacheDir = Join-Path $env:LOCALAPPDATA 'guide-tutor\tts-cache' }
+    try { [void](New-Item -ItemType Directory -Path $cacheDir -Force) } catch { }
+
+    $cachePath = $null
     try {
-        $raw = & $python $synth --out $out --rate $RateValue --volume $VolumeValue 2>$null
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $seed = [System.Text.Encoding]::UTF8.GetBytes($Text + '|' + $voiceForCache + '|' + $RateValue + '|' + $VolumeValue)
+        $hash = -join ($sha.ComputeHash($seed) | ForEach-Object { $_.ToString('x2') })
+        $sha.Dispose()
+        $cachePath = Join-Path $cacheDir ($hash.Substring(0, 20) + '.mp3')
     }
-    catch {
+    catch { $cachePath = $null }
+
+    $file = $null
+    if ($cachePath -and (Test-Path $cachePath) -and ((Get-Item $cachePath).Length -gt 800)) {
+        $file = $cachePath
+    }
+    else {
+        $out = Join-Path $env:TEMP ('guide-tts-' + [guid]::NewGuid().ToString('N') + '.mp3')
         $raw = $null
-    }
-    finally {
-        $env:PYTHONPATH = $prevPythonPath
-        $env:GUIDE_TTS_VOICE = $prevVoice
+        $errReader = $null
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $python
+            $psi.Arguments = '"' + $synth + '" --out "' + $out + '" --rate ' + $RateValue + ' --volume ' + $VolumeValue
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $psi.CreateNoWindow = $true
+            $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+            $proc = [System.Diagnostics.Process]::Start($psi)
+            $reader = $proc.StandardOutput.ReadToEndAsync()
+            # stderr 也要读走：不读的话管道写满会把 python 卡住。
+            $errReader = $proc.StandardError.ReadToEndAsync()
+            # 超时保护：edge 连接卡住时不让用户干等，10 秒没结果就放弃、回落 SAPI。
+            if ($proc.WaitForExit(10000)) { $raw = $reader.Result }
+            else { try { $proc.Kill() } catch { } }
+        }
+        catch { $raw = $null }
+
+        $line = ($raw -split "`n") | Where-Object { $_ -match '"type"\s*:' } | Select-Object -Last 1
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            try { $res = $line | ConvertFrom-Json } catch { $res = $null }
+            if ($res -and $res.type -eq 'file' -and (Test-Path $res.path)) {
+                if ($cachePath) {
+                    try {
+                        Move-Item -LiteralPath $out -Destination $cachePath -Force -ErrorAction Stop
+                        $file = $cachePath
+                    }
+                    catch { $file = $out }
+                }
+                else { $file = $out }
+            }
+        }
+        if (-not $file) { try { Remove-Item $out -Force -ErrorAction SilentlyContinue } catch { } }
     }
 
-    $line = $raw | Where-Object { $_ -match '"type"\s*:' } | Select-Object -Last 1
-    if ([string]::IsNullOrWhiteSpace($line)) { return $false }
-    try { $res = $line | ConvertFrom-Json } catch { return $false }
-    if ($res.type -ne 'file' -or -not (Test-Path $res.path)) { return $false }
-
-    $file = [string]$res.path
+    $env:PYTHONPATH = $prevPythonPath
+    $env:GUIDE_TTS_VOICE = $prevVoice
+    if (-not $file) { return $false }
 
     # ---- 用 MCI 播放 mp3：wav 以外的格式 System.Media.SoundPlayer 播不了 ----
     if (-not ('GuideMci.Win32' -as [type])) {
@@ -136,7 +182,10 @@ public static extern int mciSendString(string command, System.Text.StringBuilder
     }
     finally {
         try { Invoke-Mci ('close ' + $alias) } catch { }
-        try { Remove-Item $file -Force -ErrorAction SilentlyContinue } catch { }
+        # 缓存文件留着给下一次；只清理临时合成结果。
+        if ($file -and -not ($cachePath -and $file -eq $cachePath)) {
+            try { Remove-Item $file -Force -ErrorAction SilentlyContinue } catch { }
+        }
     }
 }
 

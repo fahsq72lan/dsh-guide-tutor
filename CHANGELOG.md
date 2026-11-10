@@ -1580,3 +1580,32 @@ AGENTS.md 要求「新想法、新功能都进表」；这条是用户口述的�
 ### 怎么恢复
 
 - 删掉 `1-想法池` 第 33 行、把 `IdeaPool` ref 改回 `A3:K32`；清空 `7-想法收件箱` 第 8 行。两份文件同样处理。
+
+## 2026-11-10 语音首句延迟修复（B06）
+
+### 改了什么
+
+- `native/tts.ps1`：
+  - `Invoke-EdgeTts` 加合成缓存：按 `文本|音色|语速|音量` 做 SHA256，取前 20 位做文件名，存 `GUIDE_TTS_CACHE`（默认 `%LOCALAPPDATA%\guide-tutor\tts-cache`）；命中时直接播 mp3，不再起 python、不再等 edge 连接。
+  - 合成进程改用 `ProcessStartInfo`：stdout / stderr 都异步读走（不读会把管道写满），10 秒超时后杀进程并回落 SAPI。
+  - 播放结束只清理临时合成文件，缓存 mp3 保留给下一次。
+- `native/tts_edge.py`：`emit()` 改为 `ensure_ascii=True`。路径里有中文用户名时，原来 UTF-8 的 JSON 被 Windows 控制台按 GBK 解码成乱码，`Test-Path` 失败，edge 分支一直静默回落 SAPI——这是 15 秒延迟的真正原因。
+- `index.js`：`import { createHash, randomBytes }`；新增 `ttsCacheDir`、`ttsCacheFile()`、`prefetchSpeech()`（播放当前句时后台把下一句合成进同一缓存）；`speakChunk` 传 `GUIDE_TTS_CACHE` 并预取 `speechQueue[0]`。
+- `package.json` 0.22.2 → 0.22.3。
+
+### 为什么
+
+B06：45 字合成 15.4 秒，整段合成完才开始播，口播像卡住；根因是 edge 输出被编码坏掉后一直回落 SAPI，而 SAPI 整句朗读又慢。
+
+### 怎么验证
+
+- `Parser::ParseFile` → `PS parse OK`；`node --check index.js` 通过。
+- 音量 0 实测同一句：首次起播 3,285 ms（合成约 1.9 s + 进程启动），第二次 1,126 ms（缓存命中）；修复前同一路径 15 秒级。
+- 缓存文件落盘：`tts-cache/314a34734c2b1b71f935.mp3`，19,440 B。
+- 宿主热重载：`plugin.log` 01:34:39 `disposed` → 01:34:41 `ready`，overlay pid 286176。
+- 待人工：连续口播时，从第二句起是否明显更快。
+
+### 怎么恢复
+
+- 删掉 `C:\Users\<User>\.dsh\guide-tutor\tts-cache` 目录即可清缓存。
+- 回滚代码：`tts.ps1` 恢复为 `& $python $synth --out $out ...` 同步合成、播完删临时 mp3；`index.js` 去掉 `GUIDE_TTS_CACHE` 与 `prefetchSpeech`；`tts_edge.py` 的 `emit()` 改回 `ensure_ascii=False`。
