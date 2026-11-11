@@ -4296,9 +4296,25 @@ function Update-Card($state) {
         $line.BorderThickness = [System.Windows.Thickness]::new(0, 0, 0, 1)
         $line.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(16, 255, 255, 255))
         [System.Windows.Controls.Grid]::SetColumn($line, 1)
-        [void]$gapRow.Children.Add($line)
         # 空档右边给个「＋」：点了就用这一段的开始时间当默认值开表单。
         $gapTime = $gl.Text
+        # 双击这条横线直接开表单；Border 没有背景时空白处不参与命中测试，必须给透明背景。
+        $line.Background = [System.Windows.Media.Brushes]::Transparent
+        $line.Tag = $gapTime
+        $line.Cursor = [System.Windows.Input.Cursors]::Hand
+        try {
+            Add-Type -AssemblyName UIAutomationTypes -ErrorAction Stop
+            [System.Windows.Automation.AutomationProperties]::SetName($line, 'gap-' + $gapTime)
+        } catch { }
+        $line.Add_MouseLeftButtonDown({
+            param($s, $e)
+            if ($e.ClickCount -ne 2) { return }
+            $e.Handled = $true
+            $when = [string]$s.Tag
+            Write-Log ('gap line double click: ' + $when)
+            try { Show-AddTaskWindow -DefaultFrom $when } catch { Write-Log ('gap line dblclick failed: ' + $_.Exception.Message) }
+        })
+        [void]$gapRow.Children.Add($line)
         $gapAdd = & $mkBtn '＋' '在这个时间加一条' ([System.Windows.Thickness]::new(0))
         $gapAdd.Opacity = 0.42
         $gapAdd.Tag = $gapTime
@@ -4313,6 +4329,20 @@ function Update-Card($state) {
             [System.Windows.Controls.Grid]::SetColumn($gapAdd, 2)
             [void]$gapRow.Children.Add($gapAdd)
         }
+        # 双击空档那一行直接开表单：默认时间就是这段的开始，地点可以之后再补。
+        # 注意：Grid 不设背景时空白处不参与命中测试，事件根本到不了这一行。
+        $gapRow.Background = [System.Windows.Media.Brushes]::Transparent
+        $gapRow.Tag = $gapTime
+        $gapRow.Cursor = [System.Windows.Input.Cursors]::Hand
+        $gapRow.ToolTip = '双击直接加一条（地点可后补）'
+        $gapRow.Add_MouseLeftButtonDown({
+            param($s, $e)
+            if ($e.ClickCount -ne 2) { return }
+            $e.Handled = $true
+            $when = [string]$s.Tag
+            Write-Log ('gap double click: ' + $when)
+            try { Show-AddTaskWindow -DefaultFrom $when } catch { Write-Log ('gap dblclick failed: ' + $_.Exception.Message) }
+        })
         [void]$script:CardItems.Children.Add($gapRow)
         $cursor = $segEnd
     }

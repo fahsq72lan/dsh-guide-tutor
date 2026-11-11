@@ -2232,3 +2232,19 @@ F10：静态箭头容易看漏，编号让「先点哪」更明确；`guide_fini
 
 ### 怎么恢复
 - `git revert`；删掉 ✕ 上那两行 `PreviewMouseLeftButtonDown` 即回到「点不关」的旧行为。
+
+## 2026-11-11 14:12 双击时间轴空档直接加任务
+
+### 改了什么
+- `native/overlay.ps1` 卡片空档行：`$line`（那条横线）加 `Background = Transparent`、`Tag = 该行开始时间`、`MouseLeftButtonDown`（`ClickCount == 2` 时打开 `Show-AddTaskWindow -DefaultFrom <该行时间>`），并加诊断用日志 `gap line double click: HH:mm`。
+- 同时给空档行（`$gapRow`）设透明背景与同样的双击处理，避免点在行内空白处无效。
+
+### 为什么
+F-card：排计划时最常见的是「空着的那一截」直接补一条，比先找＋再填时间快；地点可以之后再改。
+
+### 怎么验证
+- `PS parse OK`、BOM/LF 正常；`guide_overlay restart`。
+- 实机把鼠标放到 12:30 空档行上双击：`overlay.log` 记 `gap line double click: 12:30`，「加一条任务」窗口打开，开始 12:30、结束 12:55，地点为空，可直接填标题后保存。
+
+### 怎么恢复
+- `git revert`；删掉 `$line` 上的透明度/双击处理与 `$gapRow` 的两行即可回到只有右侧「＋」的旧行为。
