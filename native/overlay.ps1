@@ -63,6 +63,136 @@ function Write-Log([string]$Message) {
     catch { }
 }
 
+# --- 设计系统（v0.23 第二档）：颜色 / 字号 / 圆角集中一处 ----------------
+# 以前每个窗口各自硬编码 FromArgb(…)，同一个灰能有五种写法；改一处全局生效。
+$script:G = @{
+    Bg        = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(236, 14, 17, 23))
+    BgSoft    = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(224, 20, 24, 31))
+    Card      = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 26, 30, 39))
+    Line      = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(34, 255, 255, 255))
+    Text      = [System.Windows.Media.Brushes]::White
+    TextDim   = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(178, 255, 255, 255))
+    TextMute  = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(120, 255, 255, 255))
+    Accent    = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 10, 132, 255))
+    AccentDim = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(44, 10, 132, 255))
+    Danger    = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 255, 69, 58))
+    Ok        = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 48, 209, 88))
+    Warn      = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 255, 159, 10))
+    RadWin    = 16.0
+    RadCard   = 10.0
+    RadBtn    = 8.0
+    FsTitle   = 14.0
+    FsBody    = 12.0
+    FsSmall   = 11.0
+}
+
+# 文字按钮：圆角底、hover 淡入浅底、按下缩到 0.96。
+# 返回 Border 本身，点击事件由调用方绑（不同窗口的语义不同）。
+function New-GTextButton([string]$Text, [string]$ToolTip = '', [double]$FontSize = 12.0) {
+    $b = [System.Windows.Controls.Border]::new()
+    $b.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadBtn)
+    $b.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(0, 255, 255, 255))
+    $b.Padding = [System.Windows.Thickness]::new(5, 2, 5, 2)
+    $b.Cursor = [System.Windows.Input.Cursors]::Hand
+    $b.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    if (-not [string]::IsNullOrEmpty($ToolTip)) { $b.ToolTip = $ToolTip }
+    $t = [System.Windows.Controls.TextBlock]::new()
+    $t.Text = $Text
+    $t.FontSize = $FontSize
+    $t.Foreground = $script:G.TextDim
+    $t.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $b.Child = $t
+    $b.Add_MouseEnter({
+        param($s, $e)
+        try {
+            $to = [System.Windows.Media.Color]::FromArgb(24, 255, 255, 255)
+            $a = [System.Windows.Media.Animation.ColorAnimation]::new($to, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(120)))
+            $s.Background.BeginAnimation([System.Windows.Media.SolidColorBrush]::ColorProperty, $a)
+            $s.Child.Foreground = $script:G.Text
+        } catch { }
+    })
+    $b.Add_MouseLeave({
+        param($s, $e)
+        try {
+            $to = [System.Windows.Media.Color]::FromArgb(0, 255, 255, 255)
+            $a = [System.Windows.Media.Animation.ColorAnimation]::new($to, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(160)))
+            $s.Background.BeginAnimation([System.Windows.Media.SolidColorBrush]::ColorProperty, $a)
+            $s.Child.Foreground = $script:G.TextDim
+        } catch { }
+    })
+    $b.Add_MouseLeftButtonDown({
+        param($s, $e)
+        try {
+            $s.RenderTransform = [System.Windows.Media.ScaleTransform]::new(0.96, 0.96)
+            $s.RenderTransformOrigin = [System.Windows.Point]::new(0.5, 0.5)
+        } catch { }
+    })
+    $b.Add_MouseLeftButtonUp({
+        param($s, $e)
+        try { $s.RenderTransform = [System.Windows.Media.Transform]::Identity } catch { }
+    })
+    return $b
+}
+
+# 主按钮：实心蓝底，用于「下一步」这类主操作。
+function New-GPrimaryButton([string]$Text, [double]$FontSize = 13.0) {
+    $b = [System.Windows.Controls.Border]::new()
+    $b.CornerRadius = [System.Windows.CornerRadius]::new(9)
+    $b.Background = $script:G.Accent
+    $b.Padding = [System.Windows.Thickness]::new(0, 7, 0, 7)
+    $b.Cursor = [System.Windows.Input.Cursors]::Hand
+    $b.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Stretch
+    $t = [System.Windows.Controls.TextBlock]::new()
+    $t.Text = $Text
+    $t.FontSize = $FontSize
+    $t.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $t.Foreground = [System.Windows.Media.Brushes]::White
+    $t.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $t.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $b.Child = $t
+    $b.Add_MouseEnter({
+        param($s, $e)
+        try {
+            $to = [System.Windows.Media.Color]::FromArgb(255, 38, 150, 255)
+            $a = [System.Windows.Media.Animation.ColorAnimation]::new($to, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(120)))
+            $s.Background.BeginAnimation([System.Windows.Media.SolidColorBrush]::ColorProperty, $a)
+        } catch { }
+    })
+    $b.Add_MouseLeave({
+        param($s, $e)
+        try {
+            $to = [System.Windows.Media.Color]::FromArgb(255, 10, 132, 255)
+            $a = [System.Windows.Media.Animation.ColorAnimation]::new($to, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(160)))
+            $s.Background.BeginAnimation([System.Windows.Media.SolidColorBrush]::ColorProperty, $a)
+        } catch { }
+    })
+    $b.Add_MouseLeftButtonDown({
+        param($s, $e)
+        try {
+            $s.RenderTransform = [System.Windows.Media.ScaleTransform]::new(0.985, 0.96)
+            $s.RenderTransformOrigin = [System.Windows.Point]::new(0.5, 0.5)
+        } catch { }
+    })
+    $b.Add_MouseLeftButtonUp({
+        param($s, $e)
+        try { $s.RenderTransform = [System.Windows.Media.Transform]::Identity } catch { }
+    })
+    return $b
+}
+
+# 给窗口内容加一层柔和外阴影：窗口本身要留出 margin，否则阴影会被窗口边界裁掉。
+function Add-GShadow($Element, [double]$Blur = 24.0, [double]$Opacity = 0.45) {
+    try {
+        $sh = [System.Windows.Media.Effects.DropShadowEffect]::new()
+        $sh.BlurRadius = $Blur
+        $sh.ShadowDepth = 6
+        $sh.Opacity = $Opacity
+        $sh.Color = [System.Windows.Media.Color]::FromArgb(255, 0, 0, 0)
+        $Element.Effect = $sh
+    } catch { }
+    return $Element
+}
+
 function Send-OverlayEvent([hashtable]$Event) {
     try {
         $json = ($Event | ConvertTo-Json -Compress -Depth 4)
@@ -1758,6 +1888,29 @@ function Show-GoalsWindow {
     [void]$newBox.Focus()
 }
 
+# 面板从右侧滑入 + 淡入：只在每次「小球 → 面板」切换时播一次，
+# 不放在 tick 里，否则每 1 秒都会重播一次。
+function Show-PanelIntro {
+    $el = $script:PanelOuter
+    if ($null -eq $el) { return }
+    try {
+        $tt = [System.Windows.Media.TranslateTransform]::new(16.0, 0.0)
+        $el.RenderTransform = $tt
+        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(0.0, 1.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(170)))
+        $ease = [System.Windows.Media.Animation.CubicEase]::new()
+        $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+        $fade.EasingFunction = $ease
+        $el.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $fade)
+        $slide = [System.Windows.Media.Animation.DoubleAnimation]::new(16.0, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(190)))
+        $ease2 = [System.Windows.Media.Animation.CubicEase]::new()
+        $ease2.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+        $slide.EasingFunction = $ease2
+        $tt.BeginAnimation([System.Windows.Media.TranslateTransform]::XProperty, $slide)
+    } catch {
+        try { $el.Opacity = 1.0 } catch { }
+    }
+}
+
 function New-PanelWindow {
     $window = [System.Windows.Window]::new()
     $window.WindowStyle = [System.Windows.WindowStyle]::None
@@ -1777,14 +1930,17 @@ function New-PanelWindow {
     $window.Top = $script:ScreenTop + 110
 
     $outer = [System.Windows.Controls.Border]::new()
-    $outer.CornerRadius = [System.Windows.CornerRadius]::new(16)
+    $outer.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadWin)
     $outer.Background = $script:PanelBg
-    $outer.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(50, 255, 255, 255))
+    $outer.BorderBrush = $script:G.Line
     $outer.BorderThickness = [System.Windows.Thickness]::new(1)
     $outer.Padding = [System.Windows.Thickness]::new(14, 12, 14, 12)
     $outer.Width = 344
     $outer.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
     $outer.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+    # 右边与底部留出投影空间，否则窗口边界会把阴影裁成一条硬边。
+    $outer.Margin = [System.Windows.Thickness]::new(0, 2, 6, 0)
+    Add-GShadow $outer 26 0.5 | Out-Null
 
     $stack = [System.Windows.Controls.StackPanel]::new()
     $outer.Child = $stack
@@ -1793,14 +1949,15 @@ function New-PanelWindow {
     # 一拖就直接冲到最大档。缩放只作用在上半部分的 $outer。
     $fixedStack = [System.Windows.Controls.StackPanel]::new()
     $bottom = [System.Windows.Controls.Border]::new()
-    $bottom.CornerRadius = [System.Windows.CornerRadius]::new(16)
+    $bottom.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadWin)
     $bottom.Background = $script:PanelBg
-    $bottom.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(50, 255, 255, 255))
+    $bottom.BorderBrush = $script:G.Line
     $bottom.BorderThickness = [System.Windows.Thickness]::new(1)
     $bottom.Padding = [System.Windows.Thickness]::new(14, 10, 14, 10)
-    $bottom.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+    $bottom.Margin = [System.Windows.Thickness]::new(0, 6, 6, 12)
     $bottom.Width = 344
     $bottom.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    Add-GShadow $bottom 22 0.45 | Out-Null
     $bottom.Child = $fixedStack
 
     $root = [System.Windows.Controls.StackPanel]::new()
@@ -1810,6 +1967,8 @@ function New-PanelWindow {
     [void]$root.Children.Add($bottom)
 
     $window.Content = $root
+    $script:PanelOuter = $outer
+    $script:PanelBottom = $bottom
 
     $header = [System.Windows.Controls.Grid]::new()
     $titleColumn = [System.Windows.Controls.ColumnDefinition]::new()
@@ -1826,6 +1985,7 @@ function New-PanelWindow {
     $title.Foreground = [System.Windows.Media.Brushes]::White
     $title.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
     $title.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+    $title.MinWidth = 84
     $title.Cursor = [System.Windows.Input.Cursors]::SizeAll
     [System.Windows.Controls.Grid]::SetColumn($title, 0)
     [void]$header.Children.Add($title)
@@ -1844,43 +2004,28 @@ function New-PanelWindow {
     $clockPanel.ToolTip = '当前时间（每秒刷新）'
     [void]$headerButtons.Children.Add($clockPanel)
 
-    $chatLog = [System.Windows.Controls.TextBlock]::new()
-    $chatLog.Text = '记录'
-    $chatLog.FontSize = 12
-    $chatLog.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
-    $chatLog.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $chatLog.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $chatLog.Cursor = [System.Windows.Input.Cursors]::Hand
-    $chatLog.ToolTip = '查看插件端最近的对话记录（谁说、从哪说、几点）'
-    $chatLog.Add_MouseLeftButtonUp({
+    $chatLog = New-GTextButton '记录' '查看插件端最近的对话记录（谁说、从哪说、几点）'
+    $chatLog.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
+    $chatLog.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
         try { Show-ChatLogWindow } catch { Write-Log ('chatlog window failed: ' + $_.Exception.Message) }
     })
     [void]$headerButtons.Children.Add($chatLog)
 
     # 清单按钮：卡片被 ✕ 收起来之后，靠这里再叫出来（点一下开/关）。
-    $cardBtn = [System.Windows.Controls.TextBlock]::new()
-    $cardBtn.Text = '清单'
-    $cardBtn.FontSize = 12
-    $cardBtn.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
-    $cardBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $cardBtn.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $cardBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $cardBtn.ToolTip = '显示/收起右侧的今日清单'
-    $cardBtn.Add_MouseLeftButtonUp({
+    $cardBtn = New-GTextButton '清单' '显示/收起右侧的今日清单'
+    $cardBtn.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
+    $cardBtn.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
         Send-OverlayEvent @{ type = 'card_toggle' }
     })
     [void]$headerButtons.Children.Add($cardBtn)
 
     # 历史按钮：按天回看清单（数据来自插件的 plan-archive/）。
-    $histBtn = [System.Windows.Controls.TextBlock]::new()
-    $histBtn.Text = '历史'
-    $histBtn.FontSize = 12
-    $histBtn.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
-    $histBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $histBtn.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $histBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $histBtn.ToolTip = '按天回看清单：每天几点做了什么、做没做'
-    # 用 Preview 版：分层窗口里普通 MouseLeftButtonUp 有时收不到（卡片上的 ✕/＋ 也是这么绑的）。
+    $histBtn = New-GTextButton '历史' '按天回看清单：每天几点做了什么、做没做'
+    $histBtn.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
     $histBtn.Add_PreviewMouseLeftButtonUp({
         param($s, $e)
         $e.Handled = $true
@@ -1889,43 +2034,34 @@ function New-PanelWindow {
     })
     [void]$headerButtons.Children.Add($histBtn)
 
-    $goals = [System.Windows.Controls.TextBlock]::new()
-    $goals.Text = '目标'
-    $goals.FontSize = 12
-    $goals.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
-    $goals.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $goals.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $goals.Cursor = [System.Windows.Input.Cursors]::Hand
-    $goals.ToolTip = '设置目标：一行一个，插件会按目标发「都市指令」'
-    $goals.Add_MouseLeftButtonUp({
+    $goals = New-GTextButton '目标' '设置目标：一行一个，插件会按目标发「都市指令」'
+    $goals.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
+    $goals.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
         try { Show-GoalsWindow } catch { Write-Log ('goals window failed: ' + $_.Exception.Message + ' @line ' + $_.InvocationInfo.ScriptLineNumber) }
     })
     [void]$headerButtons.Children.Add($goals)
 
     # 大小用滑块调（在 footer 下方单独一行），这里不再放按钮。
 
-    $copy = [System.Windows.Controls.TextBlock]::new()
-    $copy.Text = '⧉'
-    $copy.FontSize = 14
-    $copy.Margin = [System.Windows.Thickness]::new(8, 0, 2, 0)
-    $copy.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $copy.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $copy.Cursor = [System.Windows.Input.Cursors]::Hand
-    $copy.ToolTip = '复制面板内容'
-    $copy.Add_MouseLeftButtonUp({ Copy-PanelText })
+    $copy = New-GTextButton '⧉' '复制面板内容' 13.0
+    $copy.Margin = [System.Windows.Thickness]::new(2, 0, 2, 0)
+    $copy.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
+        Copy-PanelText
+    })
     [void]$headerButtons.Children.Add($copy)
 
-    $collapse = [System.Windows.Controls.TextBlock]::new()
-    $collapse.Text = '—'
-    $collapse.FontSize = 15
-    $collapse.Margin = [System.Windows.Thickness]::new(8, 0, 2, 0)
-    $collapse.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 255, 255, 255))
-    $collapse.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-    $collapse.Cursor = [System.Windows.Input.Cursors]::Hand
+    $collapse = New-GTextButton '—' '收起面板，回到小球' 14.0
+    $collapse.Margin = [System.Windows.Thickness]::new(0, 0, 0, 0)
     [void]$headerButtons.Children.Add($collapse)
     [void]$header.Children.Add($headerButtons)
 
-    $collapse.Add_MouseLeftButtonUp({
+    $collapse.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
         Send-OverlayEvent @{ type = 'mode'; mode = 'ball' }
     })
 
@@ -2002,13 +2138,12 @@ function New-PanelWindow {
     })
     [void]$nextRow.Children.Add($listenToggle)
 
-    $advance = New-PanelButton '下一步 ›'
-    $advance.HorizontalContentAlignment = [System.Windows.HorizontalAlignment]::Center
-    $advance.FontWeight = [System.Windows.FontWeights]::SemiBold
-    $advance.Background = $script:AccentBrush
-    $advance.BorderThickness = [System.Windows.Thickness]::new(0)
+    $advance = New-GPrimaryButton '下一步 ›' 13.0
+    $advance.Margin = [System.Windows.Thickness]::new(0, 0, 0, 0)
     $advance.ToolTip = '按计划往前一步：面板走到下一步，并请模型标注要做的事'
-    $advance.Add_Click({
+    $advance.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
         Send-OverlayEvent @{ type = 'next_step' }
         Show-VoiceToast '已请求下一步…'
     })
@@ -4902,6 +5037,7 @@ function Apply-State($state) {
                 $script:BallWindow.Hide()
                 $script:AnnWindow.Show()
                 $script:PanelWindow.Show()
+                Show-PanelIntro
             }
             default {
                 $script:AnnWindow.Hide()

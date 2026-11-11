@@ -2175,3 +2175,24 @@ F10：静态箭头容易看漏，编号让「先点哪」更明确；`guide_fini
 
 ### 怎么恢复
 - `git revert`；删掉 `Add-SeqBadge` 与 `Update-Annots` 里的淡出分支即回到原样。
+
+## 2026-11-11 13:46 面板组件化第一批（token / 按钮 / 投影 / 滑入）
+
+### 改了什么
+- `native/overlay.ps1` 新增设计系统 `$script:G`：背景、卡片、分割线、三级文字、主色、危险/成功/警告色，以及圆角（窗口 16 / 卡片 10 / 按钮 8）与字号（14/12/11）。以后调色只改这一处。
+- 新增组件：`New-GTextButton`（圆角透明底、hover 120ms 淡入浅底、按下缩到 0.96）、`New-GPrimaryButton`（实心蓝、hover 变亮、按下压扁）、`Add-GShadow`（柔和外投影）。
+- 面板标题栏 6 个文字按钮（记录 / 清单 / 历史 / 目标 / 复制 / 收起）全部换成 `New-GTextButton`；「下一步」换成 `New-GPrimaryButton`。
+- 面板根容器 `$outer` 与底部工具条 `$bottom`：圆角改用 token、描边降到 34 透明度、加 `DropShadowEffect`，并留出 margin（右 6、下 12）避免阴影被窗口边界裁掉。
+- 新增 `Show-PanelIntro`：从「小球」切到「面板」时 170ms 淡入 + 16px 从右滑入；只在模式切换时播一次，不在 tick 里重复。
+- 标题 `MinWidth=84`，按钮内边距从 8,4 收到 5,2，避免标题被挤没。
+
+### 为什么
+用户要求「第二档：组件化 + 动效」。这批先把样式集中、按钮统一、面板有浮起感和入场动画，不改任何业务逻辑。
+
+### 怎么验证
+- `Parser::ParseFile` 输出 `PS parse OK`（BOM 已补，字节 `EF BB BF`）。
+- `guide_overlay restart` 成功；`CopyFromScreen` 截图确认：标题栏按钮有间距与圆角、面板右下有柔和投影、下一步是整行蓝底圆角按钮。
+- 已知未解决：标题栏按钮仍多、长标题会被省略；步骤区第三步会被「下一步」按钮压住（原有布局问题）；面板与卡片同时显示时会重叠（取决于卡片被拖到哪）。
+
+### 怎么恢复
+- `git revert` 本次提交；`$script:G`、三个组件函数、`Show-PanelIntro` 可整段删除，按钮换回原来的 `TextBlock` 写法。
