@@ -2217,3 +2217,18 @@ F10：静态箭头容易看漏，编号让「先点哪」更明确；`guide_fini
 
 ### 附带修复
 - `New-GWindow` 参数原名 `$Title` 与函数内 `$title`（TextBlock）在 PowerShell 里大小写不敏感、实为同一变量，导致 `$title.Text = $Title` 报「找不到属性 Text」；参数改名为 `$Caption`。
+
+## 2026-11-11 13:56 修窗口 ✕ 点不关
+
+### 改了什么
+- `native/overlay.ps1` `New-GWindow`：✕ 按钮增加 `PreviewMouseLeftButtonDown` 并 `$e.Handled = $true`；关闭回调加日志（`gwin close clicked` / `gwin close failed: …`）。
+
+### 为什么
+标题栏整条是拖动区：在 ✕ 上按下时，`MouseLeftButtonDown` 冒泡到标题栏触发了 `DragMove()`，鼠标被拖动逻辑捕获，✕ 收不到 `MouseUp`，所以点 ✕ 没反应。
+
+### 怎么验证
+- `PS parse OK`、BOM/LF 正常；`guide_overlay restart`。
+- 点「历史」打开窗口 → 点右上角 ✕ → `overlay.log` 出现 `gwin close clicked`，窗口立即消失（截图确认）。
+
+### 怎么恢复
+- `git revert`；删掉 ✕ 上那两行 `PreviewMouseLeftButtonDown` 即回到「点不关」的旧行为。

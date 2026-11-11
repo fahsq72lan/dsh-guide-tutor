@@ -1932,10 +1932,21 @@ function New-GWindow([string]$Caption, [double]$Width = 640.0, [double]$Height =
 
     $closeBtn = New-GTextButton '✕' '关闭' 13
     $closeBtn.Tag = $win
+    # 关键：标题栏整条拖拽会在 MouseLeftButtonDown 时 DragMove 并捕获鼠标，
+    # 不拦住的话 ✕ 收不到 MouseUp，窗口就「点不关」。
+    $closeBtn.Add_PreviewMouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+    })
     $closeBtn.Add_PreviewMouseLeftButtonUp({
         param($s, $e)
         $e.Handled = $true
-        try { $s.Tag.Close() } catch { }
+        try {
+            Write-Log 'gwin close clicked'
+            $s.Tag.Close()
+        } catch {
+            Write-Log ('gwin close failed: ' + $_.Exception.Message)
+        }
     })
     [System.Windows.Controls.Grid]::SetColumn($closeBtn, 1)
     [void]$bar.Children.Add($closeBtn)
