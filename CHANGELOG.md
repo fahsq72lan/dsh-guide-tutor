@@ -2285,3 +2285,18 @@ F12：知识库文件多了以后「找得到」比「存得下」更重要；�
 
 ### 怎么恢复
 - `git revert`；删掉 `kbSearch` 与 schema 里的 `search` 即回到只能 list/read/save/delete 的版本。
+
+## 2026-11-11 18:53 面板入场动画放慢、减少首帧卡顿
+
+### 改了什么
+- `native/overlay.ps1` `Show-PanelIntro`：淡入 170ms → 320ms、右滑 190ms → 380ms、位移 16px → 10px；动画开始前调用 `$el.UpdateLayout()`，先把布局跑完再起动画。
+
+### 为什么
+用户反馈：点开小球后面板淡入「卡顿而且太快」。卡顿多半是窗口 Show 后的首帧布局重建和动画抢帧；时长也确实偏短，观感是「一下跳出来」。
+
+### 怎么验证
+- `PS parse OK`、BOM/LF 正常；`guide_overlay restart` 后 `overlay.log` 只有正常的 `overlay started`，无异常。
+- 实机点球展开面板，淡入与右滑明显变缓；若仍卡，下一步再关掉位移只保留淡入。
+
+### 怎么恢复
+- `git revert`；把时长改回 170/190、位移改回 16、删掉 `UpdateLayout()` 即回到旧观感。

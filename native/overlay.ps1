@@ -1973,14 +1973,16 @@ function Show-PanelIntro {
     $el = $script:PanelOuter
     if ($null -eq $el) { return }
     try {
-        $tt = [System.Windows.Media.TranslateTransform]::new(16.0, 0.0)
+        # 先把布局跑完再起动画：窗口 Show 后的首帧重建会和动画抢帧，看着就是一卡。
+        $el.UpdateLayout()
+        $tt = [System.Windows.Media.TranslateTransform]::new(10.0, 0.0)
         $el.RenderTransform = $tt
-        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(0.0, 1.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(170)))
+        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(0.0, 1.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(320)))
         $ease = [System.Windows.Media.Animation.CubicEase]::new()
         $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
         $fade.EasingFunction = $ease
         $el.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $fade)
-        $slide = [System.Windows.Media.Animation.DoubleAnimation]::new(16.0, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(190)))
+        $slide = [System.Windows.Media.Animation.DoubleAnimation]::new(10.0, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(380)))
         $ease2 = [System.Windows.Media.Animation.CubicEase]::new()
         $ease2.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
         $slide.EasingFunction = $ease2
