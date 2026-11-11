@@ -314,12 +314,67 @@ function Add-TextLabel([double]$X, [double]$Y, [string]$Text) {
     [void]$script:AnnCanvas.Children.Add($border)
 }
 
+function Add-SeqBadge([double]$X, [double]$Y, [int]$N, $Brush) {
+    $chars = '①②③④⑤⑥⑦⑧⑨⑩'
+    if ($N -lt 1 -or $N -gt $chars.Length) { return }
+    $badge = [System.Windows.Controls.Border]::new()
+    $badge.Width = 22
+    $badge.Height = 22
+    $badge.CornerRadius = [System.Windows.CornerRadius]::new(11)
+    $badge.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(238, 14, 17, 23))
+    $badge.BorderBrush = $Brush
+    $badge.BorderThickness = [System.Windows.Thickness]::new(1.6)
+    $tb = [System.Windows.Controls.TextBlock]::new()
+    $tb.Text = [string]$chars[$N - 1]
+    $tb.FontSize = 13
+    $tb.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $tb.Foreground = [System.Windows.Media.Brushes]::White
+    $tb.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $tb.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $badge.Child = $tb
+    [System.Windows.Controls.Canvas]::SetLeft($badge, $X - 11)
+    [System.Windows.Controls.Canvas]::SetTop($badge, $Y - 11)
+    [void]$script:AnnCanvas.Children.Add($badge)
+}
+
 function Update-Annots($Annots) {
     $canvas = $script:AnnCanvas
+    $list = @()
+    if ($null -ne $Annots) { $list = @($Annots | Where-Object { $null -ne $_ }) }
+    if ($list.Count -eq 0) {
+        # 标注被清空：先 0.3 秒淡出，再真正清掉，收尾不突兀。
+        if ($canvas.Children.Count -gt 0 -and -not $script:AnnFading) {
+            $script:AnnFading = $true
+            $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(1.0, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(300)))
+            $fade.EasingFunction = [System.Windows.Media.Animation.CubicEase]::new()
+            $fade.EasingFunction.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseIn
+            $canvas.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $fade)
+            if ($null -eq $script:AnnFadeTimer) {
+                $script:AnnFadeTimer = [System.Windows.Threading.DispatcherTimer]::new()
+                $script:AnnFadeTimer.Interval = [TimeSpan]::FromMilliseconds(320)
+                $script:AnnFadeTimer.Add_Tick({
+                    $script:AnnFadeTimer.Stop()
+                    $script:AnnFading = $false
+                    $script:AnnCanvas.Children.Clear()
+                    $script:AnnCanvas.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null)
+                    $script:AnnCanvas.Opacity = 1.0
+                })
+            }
+            $script:AnnFadeTimer.Stop()
+            $script:AnnFadeTimer.Start()
+        }
+        return
+    }
+    if ($script:AnnFading) {
+        if ($null -ne $script:AnnFadeTimer) { $script:AnnFadeTimer.Stop() }
+        $script:AnnFading = $false
+        $canvas.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null)
+        $canvas.Opacity = 1.0
+    }
     $canvas.Children.Clear()
-    if ($null -eq $Annots) { return }
 
-    foreach ($shape in @($Annots)) {
+    $seq = 0
+    foreach ($shape in $list) {
         if ($null -eq $shape) { continue }
         $kind = [string]$shape.kind
         $brush = $script:AccentBrush
@@ -328,6 +383,10 @@ function Update-Annots($Annots) {
         }
         $thickness = 5.0
         if ($null -ne $shape.thickness) { $thickness = [double]$shape.thickness }
+        $bx = [double]$shape.x
+        $by = [double]$shape.y
+        if ($kind -eq 'arrow') { $bx = [double]$shape.x1; $by = [double]$shape.y1 }
+        if ($kind -ne 'text') { $seq += 1 }
 
         switch ($kind) {
             'rect' {
@@ -400,6 +459,9 @@ function Update-Annots($Annots) {
                 $path.Fill = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(135, 0, 0, 0))
                 [void]$canvas.Children.Add($path)
             }
+        }
+        if ($kind -ne 'text') {
+            Add-SeqBadge $bx $by $seq $brush
         }
     }
 }

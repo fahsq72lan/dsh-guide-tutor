@@ -2156,3 +2156,22 @@ T01 拆 `lib/plan.js` 时，`plan.js` 里两处引用了 `todayClassesText`（�
 
 ### 怎么恢复
 - `git revert` 本次提交；删掉 `lib/plan.js` 里的 `todayClassesText` 即可回到报错状态。
+
+## 2026-11-11 13:20 F10 标注层：步骤编号 + 完成后淡出
+
+### 改了什么
+- `native/overlay.ps1` `Update-Annots`：
+  - 新增 `Add-SeqBadge`：每个非文字标注左上角画 22px 圆标，依次为 ①②③…（rect/circle 取 `x,y`，arrow 取 `x1,y1`，spotlight 取 `x,y`）。
+  - 标注被清空时不再瞬间 `Children.Clear()`：先 300ms `DoubleAnimation` 把画布透明度降到 0（CubicEaseIn），320ms 后真正清空并复位；淡出期间若来了新标注，取消动画、恢复不透明。
+- 未做：箭头沿线流动（保留到 F10 的后续）。
+
+### 为什么
+F10：静态箭头容易看漏，编号让「先点哪」更明确；`guide_finish` 直接清标注太突兀，加 0.3 秒淡出收尾。
+
+### 怎么验证
+- `PS parse OK`、BOM `EF BB BF`、LF 正常；`guide_overlay restart` 无报错。
+- `guide_teach` 画 rect + arrow：截屏可见矩形左上角 ①、箭头起点 ②，标签位置正常。
+- 传 `annots: []` 后，约 420ms 截屏标注已完全消失，面板保留。
+
+### 怎么恢复
+- `git revert`；删掉 `Add-SeqBadge` 与 `Update-Annots` 里的淡出分支即回到原样。
