@@ -2300,3 +2300,22 @@ F12：知识库文件多了以后「找得到」比「存得下」更重要；�
 
 ### 怎么恢复
 - `git revert`；把时长改回 170/190、位移改回 16、删掉 `UpdateLayout()` 即回到旧观感。
+
+## 2026-11-11 19:02 球→面板切换：先隐藏球再淡入面板
+
+### 改了什么
+- `native/overlay.ps1` `Apply-State` 的 `switch ($mode)`：
+  - `panel` 分支不再先 Show 面板再慢慢淡入；球立即 `Hide()`，同一帧收起面板到 0 再 `Show()`，交给 `Show-PanelIntro` 做 320ms 淡入 + 10px 右滑。
+  - `ball` 分支恢复面板隐藏、球显示；球根元素 `$script:BallRoot` 的 `Opacity` 复位，避免上次残留透明。
+  - 删掉未生效的 `Play-BallExit` 调用与 `PanelEnterTimer` 延迟显示（DispatcherTimer 在脚本块里的 Tick 不可靠）。
+- 新增 `$script:BallRoot = $grid`（球的窗口内容），供以后做内容级动画用。
+
+### 为什么
+用户反馈「点小球后消失然后 UI 出现」的过渡不连贯、有卡帧。根因是球和面板是两个独立窗口，切换时球要等动画结束才藏、面板又延迟显示，中间出现空档。
+
+### 怎么验证
+- `PS parse OK`、BOM/LF 正常；`guide_overlay restart` 后日志 `mode=panel ... ball=False panel=True`，说明球已隐藏、面板同帧显示。
+- 抓帧（50/130/250/420ms）：球在首帧内消失，面板从 0 开始淡入，420ms 内完成。
+
+### 怎么恢复
+- `git revert`；把 `panel` 分支改回「先 Play-BallExit 再延迟 Show」即可。

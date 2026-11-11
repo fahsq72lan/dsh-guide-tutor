@@ -738,6 +738,7 @@ function New-BallWindow {
     $script:BallLabel = $label
     $script:BallShadow = $shadow
     $script:BallStack = $ballStack
+    $script:BallRoot = $grid
     $script:DragState = $null
 
     $grid.Add_MouseLeftButtonDown({
@@ -1990,6 +1991,46 @@ function Show-PanelIntro {
     } catch {
         try { $el.Opacity = 1.0 } catch { }
     }
+}
+
+function Play-BallExit {
+    $el = $script:BallWindow
+    if ($null -eq $el -or -not $el.IsVisible) { return }
+    try {
+        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(1.0, 0.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(130)))
+        $ease = [System.Windows.Media.Animation.CubicEase]::new()
+        $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseIn
+        $fade.EasingFunction = $ease
+        [System.Windows.Media.Animation.Timeline]::SetDesiredFrameRate($fade, 60)
+        $el.BeginAnimation([System.Windows.Window]::OpacityProperty, $fade)
+    } catch { }
+    if ($null -eq $script:BallExitTimer) {
+        $script:BallExitTimer = [System.Windows.Threading.DispatcherTimer]::new()
+        $script:BallExitTimer.Interval = [TimeSpan]::FromMilliseconds(140)
+        $script:BallExitTimer.Add_Tick({
+            try { $script:BallExitTimer.Stop() } catch { }
+            try {
+                [void]$script:BallWindow.BeginAnimation([System.Windows.Window]::OpacityProperty, $null)
+                $script:BallWindow.Opacity = 1.0
+                $script:BallWindow.Hide()
+            } catch { }
+        })
+    }
+    $script:BallExitTimer.Stop()
+    $script:BallExitTimer.Start()
+}
+
+function Play-BallEnter {
+    $el = $script:BallWindow
+    if ($null -eq $el) { return }
+    try {
+        $fade = [System.Windows.Media.Animation.DoubleAnimation]::new(0.0, 1.0, [System.Windows.Duration]::new([TimeSpan]::FromMilliseconds(120)))
+        $ease = [System.Windows.Media.Animation.CubicEase]::new()
+        $ease.EasingMode = [System.Windows.Media.Animation.EasingMode]::EaseOut
+        $fade.EasingFunction = $ease
+        [System.Windows.Media.Animation.Timeline]::SetDesiredFrameRate($fade, 60)
+        $el.BeginAnimation([System.Windows.Window]::OpacityProperty, $fade)
+    } catch { }
 }
 
 function New-PanelWindow {
@@ -5221,6 +5262,12 @@ function Apply-State($state) {
         $script:Mode = $mode
         switch ($mode) {
             'ball' {
+                try {
+                    if ($null -ne $script:BallRoot) {
+                        [void]$script:BallRoot.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null)
+                        $script:BallRoot.Opacity = 1.0
+                    }
+                } catch { }
                 $script:PanelWindow.Hide()
                 $script:AnnWindow.Show()
                 $script:BallWindow.Show()
