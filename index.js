@@ -2374,6 +2374,9 @@ export function apply(ctx, config = {}) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>屏幕教学助手 · 实时状态</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png">
+<meta name="theme-color" content="#14181f">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -2433,7 +2436,7 @@ export function apply(ctx, config = {}) {
   </section>
 </main>
 <script>
-  var API = location.pathname.replace(/\/+$/, '');
+  var API = location.pathname.replace(/[/]+$/, '');
   function el(id) { return document.getElementById(id); }
   function renderKb(files) {
     var ul = el('kb'); ul.innerHTML = '';
@@ -2526,6 +2529,40 @@ export function apply(ctx, config = {}) {
       if (req.method === 'GET' && (sub === '/' || sub === '/index.html')) {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
         res.end(DASHBOARD_HTML)
+        return
+      }
+      // PWA 清单：让 Edge/Chrome 能把状态页「安装为应用」，装完任务栏就是插件自己的图标。
+      if (req.method === 'GET' && sub === '/manifest.webmanifest') {
+        const manifest = {
+          name: '屏幕教学助手 · 实时状态',
+          short_name: '教学助手',
+          description: '屏幕教学助手插件的实时状态页',
+          start_url: '/',
+          scope: '/',
+          display: 'standalone',
+          background_color: '#0f1218',
+          theme_color: '#14181f',
+          icons: [
+            { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          ],
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/manifest+json; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        })
+        res.end(JSON.stringify(manifest))
+        return
+      }
+      if (req.method === 'GET' && (sub === '/icon-192.png' || sub === '/icon-512.png')) {
+        try {
+          const png = fs.readFileSync(path.join(HERE, 'assets', sub.slice(1)))
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+          res.end(png)
+        } catch {
+          res.writeHead(404)
+          res.end()
+        }
         return
       }
       if (req.method === 'GET' && sub === '/status') {

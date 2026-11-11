@@ -11,6 +11,7 @@
   },
   "files": [
     "index.js",
+    "assets",
     "cordis.patch.yml",
     "native/overlay.ps1",
     "native/asr.py",

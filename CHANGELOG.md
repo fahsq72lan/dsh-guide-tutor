@@ -2355,3 +2355,95 @@ F12：知识库文件多了以后「找得到」比「存得下」更重要；�
 
 ### 怎么恢复
 - `git revert` 本次提交即可回到上一版交接文档。
+
+## 2026-11-11 19:30 状态页装成桌面应用（PWA）：一个图标一个窗口
+
+### 改了什么
+- `index.js`：状态页 `<head>` 加 3 行：`<link rel="manifest" href="/manifest.webmanifest">`、`<link rel="icon" href="/icon-192.png">`、`<meta name="theme-color" content="#14181f">`（`index.js:2376` 附近）；
+- `index.js` `apiHandler`（`index.js:2502`）新增 3 个 GET 分支：`/manifest.webmanifest` 返回 PWA 清单（`standalone`、192/512 图标）、`/icon-192.png` 与 `/icon-512.png` 从 `assets/` 读文件返回（1 天缓存，找不到回 404）；
+- 新增 `assets/icon-192.png`（7,120 B）、`assets/icon-512.png`（19,553 B）：用 Edge headless 把 `icon.svg` 渲染成透明底 PNG；
+- 新增 `assets/guide-tutor.ico`（35,063 B）：Pillow 从 512 PNG 生成 16/32/48/64/128/256 多尺寸，留给快捷方式用；
+- `README.md` 新增「装成桌面应用（PWA）」一节（安装步骤 + 端口漂移提醒）；
+- `package.json` `files` 加 `"assets"`，打包时带上图标。
+
+### 为什么
+用户要「点任务栏图标 → 打开一个独立窗口显示插件页面」，跟浏览器图标一个体验。状态页 `http://127.0.0.1:41999/` 本来就有，缺的只是 manifest 和图标；补齐后 Edge/Chrome 能「安装此站点为应用」，任务栏出插件自己的图标、窗口无地址栏。
+
+### 怎么验证
+- `node --check index.js` 通过（EXIT 0）；
+- `assets/icon-512.png` 512×512、RGBA、四角 alpha=0（Pillow 检查），`read_image` 目视图标正常；
+- 实机：`cordis.patch.yml` 的 touch 行改过也没触发重载（等 18 秒仍 404），确认宿主代码必须**重启 DSH 应用**才生效——重启后 `curl http://127.0.0.1:41999/manifest.webmanifest` 应返回 JSON；Edge 打开状态页，地址栏出现「安装此站点为应用」。touch 行已改回原值。
+
+### 怎么恢复
+- `git revert` 本次提交；或删掉 `apiHandler` 里 3 个分支与 `<head>` 的 3 行、删 `assets/` 目录，状态页恢复成纯网页。
+
+## 2026-11-11 19:33 修复状态页脚本语法错误（"连接中…"的根因）
+
+### 改了什么
+- index.js:2439：ar API = location.pathname.replace(/\/+$/, ''); 改为 ar API = location.pathname.replace(/[/]+$/, '');（1 行）。
+- 根因：DASHBOARD_HTML 是模板字符串，源码里的 \/ 会被 JS 转义成 /，浏览器收到的内联脚本变成 eplace(//+$/, '')——// 是注释开头，整行剩余部分被吞，Chrome 报 Uncaught SyntaxError: missing ) after argument list（第 70 行 57 列），整个 <script> 不执行。
+
+### 为什么
+用户重启 DSH 后打开 http://127.0.0.1:41999/ 一直显示「连接中…」。用 headless Edge 加载页面并注入 window.onerror 复现出上述语法错误；DOM dump 里 #ov 仍是「—」、/status 的 clients=0，确认页面脚本从未执行。这是状态页一直存在的旧 bug（SSE、按钮、滑杆因此全都没工作过），与本次 PWA 改动无关。
+
+### 怎么验证
+- 复现（修复前）：headless Edge + 注入 onerror，得到 ERR 70:57 Uncaught SyntaxError: missing ) after argument list；curl /status 的 clients 为 0。
+- 修复后需重启 DSH（宿主代码无热重载）；重启后 curl http://127.0.0.1:41999/ 应含 eplace(/[/]+$/, '')，浏览器页面应显示「实时连接」。
+
+### 怎么恢复
+- 把 index.js:2439 改回 eplace(/\/+$/, '') 即回到故障状态（不建议）；回退整个 PWA 改动见上一条。
+
+## 2026-11-12 16:45 修排程唤醒失败：DSH 没开对话时 5 分钟后重试
+
+### 改了什么
+
+- `lib/plan.js:306`：`planState` 初始值由 `{ buildPromptedFor: '' }` 扩为 `{ buildPromptedFor: '', buildAttemptAt: '', buildFailedNoteFor: '' }`（新增 2 个字段）。
+- `lib/plan.js:545-568`（`planTick` 排程段）：重写「今天还没清单就叫一次」的逻辑——
+  - 旧：先把 `planState.buildPromptedFor = today` 写死，再 `wakePlan(...)`，失败只记一条 daylog，当天不再重试；
+  - 新：先记 `buildAttemptAt`，`wakePlan` **成功才**写 `buildPromptedFor`；失败时 5 分钟内不重试（按 `buildAttemptAt` 节流），失败只记一次 daylog（`buildFailedNoteFor` 去重），之后每 5 分钟重试直到成功。
+- `C:\Users\<User>\.dsh\guide-tutor\plan-state.json`：把今天写死的 `"buildPromptedFor": "2026-11-12"` 清空为 `""`，并补两个新字段空值，让重启后今天能重新尝试排程。
+
+### 为什么
+
+2026-11-12 16:33 插件启动时，DSH 里还没有打开的对话，`ctx.agents.roots()` 为空，`pickAgent()` 返回 null，日志 `[2026-11-12T08:33:02.305Z] plan wake: no agent`。旧代码在 wake 之前就把 `buildPromptedFor` 写成今天，于是当天再也不会重试，用户 16:33 发消息后清单也一直空着（daylog 里那条「计划排程没叫起来」就是这么来的）。
+
+### 怎么验证
+
+- `node --check lib/plan.js` → EXIT 0；`node --check index.js` → EXIT 0（用 `D:\deepseekHarness\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`）。
+- 重启 DSH 后看 `plugin.log`：应出现 `followup delivered to agent ...` 或计划排程相关的成功投递；`daylog-2026-11-12.jsonl` 不应再新增「计划排程没叫起来」。
+- HTTP `GET /api/guide-tutor/journal?date=2026-11-12` 可查当天流水。
+
+### 怎么恢复
+
+- `git revert` 本次提交；或把 `lib/plan.js` 的排程段改回旧写法（先写 `buildPromptedFor` 再 `wakePlan`），`planState` 恢复 `{ buildPromptedFor: '' }`。
+- `plan-state.json` 是运行时数据：删掉文件会按默认值重建（当天会重新尝试排程）。
+- 本次只改代码与运行时状态，未动 `plan.json` 里的清单条目。
+
+## 2026-11-12 23:05 准备开源：抹掉仓库里的私人信息
+
+### 改了什么
+
+- 全文替换私人信息为占位符（`tmp/scrub-privacy.mjs` 脚本，脚本本身在 `tmp/`，被 .gitignore 忽略、不提交）：
+  - Windows 用户名（`C:\Users\<User> 后面那段）→ `<User>`，零散出现的地方一并替换；
+  - 真实姓名 → `<姓名>`；学号 → `<学号>`；
+  - 班级 → `<班级>`。
+- 受影响文件：`CHANGELOG.md`（11 处）、`HANDOFF.md`（8 处）、`tools/probe-subtitle.cjs`（1 处，硬编码的数据目录）。
+- 新增 `assets/`（PWA 图标三件套）与 README 的 PWA 一节随后一并提交。
+- 用 `git filter-repo --replace-text` 重写全部 59 个提交与 29 个 tag 的历史文本，让历史里也不再出现上述词；改写前用 `git bundle create tmp/pre-github-backup.bundle --all` 留了完整备份（700 KB，在 `tmp/` 下，不入库）。
+
+### 为什么
+
+要上传到公开仓库 `dsh-guide-tutor`。只清洗工作区不够——公开的是整个提交历史，旧提交里的姓名、学号、Windows 用户名同样会被人看到，所以历史也重写。
+
+### 怎么验证
+
+- 工作区残留检查：用 `tmp/privacy-rules.txt` 里那四个词分别跑 `git grep`，无输出（exit 1）。
+- 历史检查：`git log --all -p | Select-String` 同样四个词，无匹配。
+- 替换样例：`HANDOFF.md:13` 变成 `- 用户：<姓名>，<学号>，<班级>；课表 C:\Users\<User>\.dsh\guide-tutor\timetable.json`。
+
+### 怎么恢复
+
+- 历史回滚：`git bundle unbundle tmp/pre-github-backup.bundle` 或 `git fetch tmp/pre-github-backup.bundle 'refs/*:refs/backup/*'` 后重置。
+- 工作区回滚：`git revert` 对应提交；或把占位符改回原文（原文可从备份 bundle 里找回）。
+- `tmp/scrub-privacy.mjs` 与 `tmp/privacy-rules.txt` 留着，下次需要清洗别的词可复用。
+
