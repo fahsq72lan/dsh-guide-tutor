@@ -2248,3 +2248,24 @@ F-card：排计划时最常见的是「空着的那一截」直接补一条，�
 
 ### 怎么恢复
 - `git revert`；删掉 `$line` 上的透明度/双击处理与 `$gapRow` 的两行即可回到只有右侧「＋」的旧行为。
+
+## 2026-11-11 14:15 双击空档改为原地输入（替代弹窗）
+
+### 改了什么
+- `native/overlay.ps1` 新增 `Stop-GapInlineEdit` 与 `Start-GapInlineEdit($GapRow, $Line, $When)`：
+  - 双击横线时把该行的横线 `Collapsed`，在同一列插入一个 `TextBox`（深色底、1px 蓝描边、白字、白光标），`Dispatcher.BeginInvoke` 里聚焦。
+  - 回车保存、Esc 取消；失焦且有文字也保存（空文字视为取消）。
+  - 保存发 `plan_add`：`from` 取该行时间，`to` 自动 +25 分钟，`place` 留空。
+- 空档行不再走 `Show-AddTaskWindow` 弹窗（上一版 0.22.32 的做法）。
+- 移除输入框的默认 ToolTip（白底与深色面板冲突）。
+
+### 为什么
+用户 m07018：「我要的是这个东西直接变成可输入的样子」——双击后应原地出现输入框，而不是再弹一个表单窗口。
+
+### 怎么验证
+- `PS parse OK`、BOM/LF 正常；`guide_overlay restart`。
+- 实机双击 12:30 横线：该行出现蓝边输入框；输入「颜色检查」回车后，`overlay.log` 记 `inline add: 12:30-12:55 颜色检查`，`plan.json` 新增 `12:30–12:55 颜色检查`，地点为空；截图确认输入框样式。
+- 测试条目已删除。
+
+### 怎么恢复
+- `git revert`；把双击处理换回 `Show-AddTaskWindow -DefaultFrom $when` 即回到弹窗版。

@@ -3843,6 +3843,84 @@ function New-CardWindow {
     $script:CardItems = $items
 }
 
+function Stop-GapInlineEdit {
+    $box = $script:CardInlineEdit
+    if ($null -eq $box) { return }
+    $script:CardInlineEdit = $null
+    try {
+        $holder = $box.Parent
+        if ($null -ne $holder) { [void]$holder.Children.Remove($box) }
+        if ($null -ne $script:CardInlineLine) {
+            $script:CardInlineLine.Visibility = [System.Windows.Visibility]::Visible
+        }
+    } catch { }
+    $script:CardInlineLine = $null
+}
+
+function Start-GapInlineEdit {
+    param($GapRow, $Line, [string]$When)
+    if ($null -ne $script:CardInlineEdit) { Stop-GapInlineEdit }
+    if ($null -eq $GapRow) { return }
+
+    $box = [System.Windows.Controls.TextBox]::new()
+    $box.FontSize = 12
+    $box.Foreground = [System.Windows.Media.Brushes]::White
+    $box.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 34, 43, 60))
+    $box.BorderThickness = [System.Windows.Thickness]::new(1)
+    $box.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(190, 10, 132, 255))
+    $box.Padding = [System.Windows.Thickness]::new(7, 2, 7, 2)
+    $box.Margin = [System.Windows.Thickness]::new(0, 1, 0, 1)
+    $box.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $box.CaretBrush = [System.Windows.Media.Brushes]::White
+    $box.Tag = $When
+    # 不加 ToolTip：默认白底 tooltip 跟深色面板冲突，提示写在行内更稳。
+    try {
+        $box.Text = ''
+    } catch { }
+
+    $line.Visibility = [System.Windows.Visibility]::Collapsed
+    [System.Windows.Controls.Grid]::SetColumn($box, 1)
+    [void]$GapRow.Children.Add($box)
+    $script:CardInlineEdit = $box
+    $script:CardInlineLine = $Line
+
+    $commit = {
+        param($s)
+        if ($script:CardInlineEdit -ne $s) { return }
+        $text = ([string]$s.Text).Trim()
+        $when = [string]$s.Tag
+        Stop-GapInlineEdit
+        if ([string]::IsNullOrWhiteSpace($text)) { return }
+        $fromMin = 0
+        if ($when -match '^(\d{1,2}):(\d{2})$') { $fromMin = [int]$Matches[1] * 60 + [int]$Matches[2] }
+        $toMin = [math]::Min($fromMin + 25, (24 * 60) - 1)
+        $toText = ('{0:00}:{1:00}' -f [math]::Floor($toMin / 60), ($toMin % 60))
+        Write-Log ('inline add: ' + $when + '-' + $toText + ' ' + $text)
+        Send-OverlayEvent @{ type = 'plan_add'; from = $when; to = $toText; title = $text; place = '' }
+    }
+
+    $box.Add_KeyDown({
+        param($s, $e)
+        if ($e.Key -eq [System.Windows.Input.Key]::Escape) {
+            $e.Handled = $true
+            Stop-GapInlineEdit
+            return
+        }
+        if ($e.Key -eq [System.Windows.Input.Key]::Enter) {
+            $e.Handled = $true
+            & $commit $s
+        }
+    }.GetNewClosure())
+    $box.Add_LostFocus({
+        param($s, $e)
+        & $commit $s
+    }.GetNewClosure())
+
+    $box.Dispatcher.BeginInvoke([System.Action]{
+        if ($null -ne $script:CardInlineEdit) { [void]$script:CardInlineEdit.Focus() }
+    }) | Out-Null
+}
+
 function Update-Card($state) {
     if ($null -eq $script:CardWindow) { New-CardWindow }
     # F02：拖动期间别重建条目，否则抓着的块会被 tick 换掉。
@@ -4312,7 +4390,7 @@ function Update-Card($state) {
             $e.Handled = $true
             $when = [string]$s.Tag
             Write-Log ('gap line double click: ' + $when)
-            try { Show-AddTaskWindow -DefaultFrom $when } catch { Write-Log ('gap line dblclick failed: ' + $_.Exception.Message) }
+            try { Start-GapInlineEdit $s.Parent $s $when } catch { Write-Log ('gap inline failed: ' + $_.Exception.Message) }
         })
         [void]$gapRow.Children.Add($line)
         $gapAdd = & $mkBtn '＋' '在这个时间加一条' ([System.Windows.Thickness]::new(0))
@@ -4334,15 +4412,7 @@ function Update-Card($state) {
         $gapRow.Background = [System.Windows.Media.Brushes]::Transparent
         $gapRow.Tag = $gapTime
         $gapRow.Cursor = [System.Windows.Input.Cursors]::Hand
-        $gapRow.ToolTip = '双击直接加一条（地点可后补）'
-        $gapRow.Add_MouseLeftButtonDown({
-            param($s, $e)
-            if ($e.ClickCount -ne 2) { return }
-            $e.Handled = $true
-            $when = [string]$s.Tag
-            Write-Log ('gap double click: ' + $when)
-            try { Show-AddTaskWindow -DefaultFrom $when } catch { Write-Log ('gap dblclick failed: ' + $_.Exception.Message) }
-        })
+        $gapRow.ToolTip = '双击横线直接输入'
         [void]$script:CardItems.Children.Add($gapRow)
         $cursor = $segEnd
     }
