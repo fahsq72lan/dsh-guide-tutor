@@ -2140,3 +2140,19 @@ F02：在卡片上按住条目上下拖，比点 ✎ 弹窗快得多；用户（
 ### 怎么恢复
 - 退回上一版：删掉 `E:\dsh插件\guide-tutor`，把 `E:\dsh插件\guide-tutor.old-20261110` 改回 `guide-tutor`。
 - 更早的 0.6.0：`E:\dsh插件\guide-tutor.old-20261109`。
+
+## 2026-11-11 13:07 修 guide_plan auto 报 todayClassesText is not defined
+
+### 改了什么
+- `lib/plan.js`：在 `createPlan` 内补 `todayClassesText(now)`（与 `lib/edict.js` 里同名实现一致：读 `timetable.json`、按星期过滤 `active`、算出「已上 N 节，接下来：…」）。约 +14 行。
+
+### 为什么
+T01 拆 `lib/plan.js` 时，`plan.js` 里两处引用了 `todayClassesText`（提示词与 `auto` 分支），但该函数当时留在了 `lib/edict.js` 内部、没有注入，于是 `guide_plan action=auto` 直接抛 `todayClassesText is not defined`。
+
+### 怎么验证
+- `node --check lib/plan.js` 通过。
+- 改 `cordis.patch.yml` 的 `reload:` 行触发热重载，13:05:54 `guide-tutor ready`，`overlay ready (pid 273488)`。
+- `guide_plan auto` 返回「现在是 13:06 / 课表：已上 2 节，接下来：15:50 大学体育@排球场1」，不再报错；随后按提示补了 10:20 数据采集技术、15:50 大学体育两条。
+
+### 怎么恢复
+- `git revert` 本次提交；删掉 `lib/plan.js` 里的 `todayClassesText` 即可回到报错状态。
