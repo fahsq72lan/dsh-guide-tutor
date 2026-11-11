@@ -2269,3 +2269,19 @@ F-card：排计划时最常见的是「空着的那一截」直接补一条，�
 
 ### 怎么恢复
 - `git revert`；把双击处理换回 `Show-AddTaskWindow -DefaultFrom $when` 即回到弹窗版。
+
+## 2026-11-11 18:45 知识库加搜索（F12 前半）
+
+### 改了什么
+- `lib/kb.js`：新增 `kbSearch(query)`——按空格拆多词，同一行同时包含全部词才算命中；`.md` 直接读文本，`.docx` 用 `docxExtract` 抽文本；每个文件最多 4 条片段，片段带行号、截到 160 字。
+- `guide_kb`：`action` 增加 `search`，新增 `query` 参数；description 与 `kbSummary` 同步（无结果时提示共搜了多少个文件）。
+
+### 为什么
+F12：知识库文件多了以后「找得到」比「存得下」更重要；之前只能 `list` 文件名，没法搜内容。
+
+### 怎么验证
+- `node --check lib/kb.js` 通过；改 `cordis.patch.yml` 的 `reload:` 触发热重载，18:44:51 `ready`。
+- 实调 `guide_kb search 实验` → 2 个文件命中（含 `.docx` 抽取结果与行号）；`Linux 实验` → 1 个文件、同一行同时含两词；`不存在的关键词xyz` → 0 命中，提示共搜 6 个文件。
+
+### 怎么恢复
+- `git revert`；删掉 `kbSearch` 与 schema 里的 `search` 即回到只能 list/read/save/delete 的版本。
