@@ -1068,13 +1068,8 @@ function Show-ChatLogWindow {
         $script:ChatLogWindow = $null
     }
 
-    $win = [System.Windows.Window]::new()
-    $win.Title = ('教学助手 · 对话记录（{0} 条）' -f @($entries).Count)
-    $win.Width = 620
-    $win.Height = 480
-    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
-    $win.Topmost = $true
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
+    $gw = New-GWindow ('教学助手 · 对话记录（{0} 条）' -f @($entries).Count) 620 480
+    $win = $gw.Window
     $win.FontFamily = 'Microsoft YaHei'
 
     $box = [System.Windows.Controls.TextBox]::new()
@@ -1089,7 +1084,7 @@ function Show-ChatLogWindow {
     $box.Padding = [System.Windows.Thickness]::new(14, 12, 14, 12)
     $box.FontSize = 13
     $box.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Top
-    $win.Content = $box
+    $gw.Body.Content = $box
     $script:ChatLogWindow = $win
     [void]$win.Show()
 }
@@ -1727,13 +1722,8 @@ function Show-GoalsWindow {
         $script:GoalsWindow = $null
     }
 
-    $win = [System.Windows.Window]::new()
-    $win.Title = ('教学助手 · 我的目标（{0} 条）' -f @($script:GoalsData).Count)
-    $win.Width = 640
-    $win.Height = [math]::Min(680, [math]::Max(420, $script:WorkHeight - 120))
-    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
-    $win.Topmost = $true
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
+    $gw = New-GWindow ('教学助手 · 我的目标（{0} 条）' -f @($script:GoalsData).Count) 640 ([math]::Min(680, [math]::Max(420, $script:WorkHeight - 120))) -NoBar
+    $win = $gw.Window
     $win.FontFamily = 'Microsoft YaHei'
 
     $grid = [System.Windows.Controls.Grid]::new()
@@ -1874,7 +1864,7 @@ function Show-GoalsWindow {
         }
     })
 
-    $win.Content = $grid
+    $gw.Body.Content = $grid
     $win.Add_Closed({
         $script:GoalsWindow = $null
         $script:GoalsStack = $null
@@ -1886,6 +1876,84 @@ function Show-GoalsWindow {
     [void]$win.Show()
     Rebuild-GoalsPanel
     [void]$newBox.Focus()
+}
+
+# 通用窗口外壳：无边框 + 圆角 + 自绘标题栏 + 投影。
+# 之前每个窗口都是系统标题栏 + 直角边框，跟深色面板不是一套视觉。
+# 返回 @{ Window; Body; Shell; Title; CloseButton }，调用方把内容塞进 Body.Content。
+function New-GWindow([string]$Caption, [double]$Width = 640.0, [double]$Height = 460.0, [switch]$NoBar) {
+    $win = [System.Windows.Window]::new()
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Topmost = $true
+    $win.Width = $Width
+    $win.Height = $Height
+    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $win.FontFamily = 'Microsoft YaHei'
+    $win.Foreground = $script:G.Text
+
+    $shell = [System.Windows.Controls.Border]::new()
+    $shell.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadWin)
+    $shell.Background = $script:G.Card
+    $shell.BorderBrush = $script:G.Line
+    $shell.BorderThickness = [System.Windows.Thickness]::new(1)
+    $shell.Margin = [System.Windows.Thickness]::new(12)
+    Add-GShadow $shell 30 0.55 | Out-Null
+
+    $dock = [System.Windows.Controls.DockPanel]::new()
+    $shell.Child = $dock
+
+    $bar = [System.Windows.Controls.Grid]::new()
+    $bar.Height = 44
+    $bar.Margin = [System.Windows.Thickness]::new(16, 6, 10, 0)
+    $bar.Tag = $win
+    $bar.Add_MouseLeftButtonDown({
+        param($s, $e)
+        if ($e.ChangedButton -ne [System.Windows.Input.MouseButton]::Left) { return }
+        try { $s.Tag.DragMove() } catch { }
+    })
+    $tCol = [System.Windows.Controls.ColumnDefinition]::new()
+    $tCol.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $bCol = [System.Windows.Controls.ColumnDefinition]::new()
+    $bCol.Width = [System.Windows.GridLength]::Auto
+    [void]$bar.ColumnDefinitions.Add($tCol)
+    [void]$bar.ColumnDefinitions.Add($bCol)
+
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $title.Text = $Caption
+    $title.FontSize = 14
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $title.Foreground = $script:G.Text
+    $title.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $title.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+    [System.Windows.Controls.Grid]::SetColumn($title, 0)
+    [void]$bar.Children.Add($title)
+
+    $closeBtn = New-GTextButton '✕' '关闭' 13
+    $closeBtn.Tag = $win
+    $closeBtn.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
+        try { $s.Tag.Close() } catch { }
+    })
+    [System.Windows.Controls.Grid]::SetColumn($closeBtn, 1)
+    [void]$bar.Children.Add($closeBtn)
+
+    [System.Windows.Controls.DockPanel]::SetDock($bar, [System.Windows.Controls.Dock]::Top)
+    [void]$dock.Children.Add($bar)
+
+    $body = [System.Windows.Controls.ContentControl]::new()
+    [System.Windows.Controls.DockPanel]::SetDock($body, [System.Windows.Controls.Dock]::Bottom)
+    [void]$dock.Children.Add($body)
+
+    if ($NoBar) {
+        $bar.Visibility = [System.Windows.Visibility]::Collapsed
+        $bar.Height = 0
+    }
+
+    $win.Content = $shell
+    return @{ Window = $win; Body = $body; Shell = $shell; Title = $title; CloseButton = $closeBtn; Bar = $bar }
 }
 
 # 面板从右侧滑入 + 淡入：只在每次「小球 → 面板」切换时播一次，
@@ -2600,14 +2668,8 @@ function Show-PlanHistoryWindow {
         $script:PlanHistoryWindow = $null
     }
 
-    $win = [System.Windows.Window]::new()
-    $win.Title = ('教学助手 · 清单历史（{0} 天）' -f $days.Count)
-    $win.Width = 700
-    $win.Height = 520
-    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
-    $win.Topmost = $true
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
-    $win.Foreground = [System.Windows.Media.Brushes]::White
+    $gw = New-GWindow ('教学助手 · 清单历史（{0} 天）' -f $days.Count) 700 520
+    $win = $gw.Window
     $win.FontFamily = 'Microsoft YaHei'
 
     $root = [System.Windows.Controls.Grid]::new()
@@ -2677,7 +2739,7 @@ function Show-PlanHistoryWindow {
     }
 
     $script:HistoryDetail = $detail
-    $win.Content = $root
+    $gw.Body.Content = $root
     $win.Add_Closed({ $script:PlanHistoryWindow = $null })
     $script:PlanHistoryWindow = $win
     [void]$win.Show()
@@ -2764,13 +2826,23 @@ function Show-AddTaskWindow {
     }
 
     $win = [System.Windows.Window]::new()
-    if ($editing) { $win.Title = '改这条任务' } else { $win.Title = '加一条任务' }
-    $win.Width = 392
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Topmost = $true
+    $win.Width = 420
     $win.SizeToContent = [System.Windows.SizeToContent]::Height
     $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
     $win.ResizeMode = [System.Windows.ResizeMode]::NoResize
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 24, 27, 33))
-    $win.Foreground = [System.Windows.Media.Brushes]::White
+    $win.FontFamily = 'Microsoft YaHei'
+
+    $shell = [System.Windows.Controls.Border]::new()
+    $shell.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadWin)
+    $shell.Background = $script:G.Card
+    $shell.BorderBrush = $script:G.Line
+    $shell.BorderThickness = [System.Windows.Thickness]::new(1)
+    $shell.Margin = [System.Windows.Thickness]::new(12)
+    Add-GShadow $shell 26 0.5 | Out-Null
 
     $stack = [System.Windows.Controls.StackPanel]::new()
     $stack.Margin = [System.Windows.Thickness]::new(18, 14, 18, 16)
@@ -3000,7 +3072,8 @@ function Show-AddTaskWindow {
     [void]$btns.Children.Add($save)
     [void]$stack.Children.Add($btns)
 
-    $win.Content = $stack
+    $shell.Child = $stack
+    $win.Content = $shell
     $script:AddTaskWindow = $win
     $script:AddFrmErr = $err
     if ($editing) { $script:AddFrmEditId = [string]$EditItem.id } else { $script:AddFrmEditId = '' }
@@ -4355,13 +4428,8 @@ function Show-TemplatesWindow {
         return
     }
 
-    $win = [System.Windows.Window]::new()
-    $win.Title = '教学助手 · 清单模板'
-    $win.Width = 520
-    $win.Height = [math]::Min(620, [math]::Max(400, $script:WorkHeight - 140))
-    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
-    $win.Topmost = $true
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
+    $gw = New-GWindow '教学助手 · 清单模板' 520 ([math]::Min(620, [math]::Max(400, $script:WorkHeight - 140))) -NoBar
+    $win = $gw.Window
     $win.FontFamily = 'Microsoft YaHei'
     $script:TemplatesWindow = $win
     $script:TplDeleteArmed = $null
@@ -4374,7 +4442,7 @@ function Show-TemplatesWindow {
         else { $rd.Height = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto) }
         [void]$grid.RowDefinitions.Add($rd)
     }
-    $win.Content = $grid
+    $gw.Body.Content = $grid
 
     $head = [System.Windows.Controls.Grid]::new()
     $h1 = [System.Windows.Controls.ColumnDefinition]::new()
@@ -4613,13 +4681,23 @@ function Show-SettingsWindow {
         return
     }
     $win = [System.Windows.Window]::new()
-    $win.Title = '教学助手 · 设置'
-    $win.Width = 396
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Topmost = $true
+    $win.Width = 420
     $win.SizeToContent = [System.Windows.SizeToContent]::Height
     $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
     $win.ResizeMode = [System.Windows.ResizeMode]::NoResize
-    $win.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 24, 27, 33))
-    $win.Foreground = [System.Windows.Media.Brushes]::White
+    $win.FontFamily = 'Microsoft YaHei'
+
+    $shell = [System.Windows.Controls.Border]::new()
+    $shell.CornerRadius = [System.Windows.CornerRadius]::new([double]$script:G.RadWin)
+    $shell.Background = $script:G.Card
+    $shell.BorderBrush = $script:G.Line
+    $shell.BorderThickness = [System.Windows.Thickness]::new(1)
+    $shell.Margin = [System.Windows.Thickness]::new(12)
+    Add-GShadow $shell 28 0.5 | Out-Null
 
     $stack = [System.Windows.Controls.StackPanel]::new()
     $stack.Margin = [System.Windows.Thickness]::new(18, 14, 18, 16)
@@ -4816,7 +4894,8 @@ function Show-SettingsWindow {
     $closeBtn.Add_Click({ param($s, $e) $script:SettingsWindow.Close() })
     [void]$stack.Children.Add($closeBtn)
 
-    $win.Content = $stack
+    $shell.Child = $stack
+    $win.Content = $shell
     $script:SettingsWindow = $win
     [void]$win.Show()
     [void]$win.Activate()
@@ -5036,6 +5115,8 @@ function Apply-State($state) {
             'panel' {
                 $script:BallWindow.Hide()
                 $script:AnnWindow.Show()
+                # 先压到 0 再 Show：否则 Show 到 BeginAnimation 之间会有一帧全不透明，看着像闪一下。
+                if ($null -ne $script:PanelOuter) { $script:PanelOuter.Opacity = 0.0 }
                 $script:PanelWindow.Show()
                 Show-PanelIntro
             }

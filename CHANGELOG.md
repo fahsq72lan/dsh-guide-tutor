@@ -2196,3 +2196,24 @@ F10：静态箭头容易看漏，编号让「先点哪」更明确；`guide_fini
 
 ### 怎么恢复
 - `git revert` 本次提交；`$script:G`、三个组件函数、`Show-PanelIntro` 可整段删除，按钮换回原来的 `TextBlock` 写法。
+
+## 2026-11-11 13:54 统一窗口外壳：无边框圆角 + 自绘标题栏（第二档第二批）
+
+### 改了什么
+- 新增 `New-GWindow([string]$Caption, [double]$Width, [double]$Height, [switch]$NoBar)`：无边框窗口 + 圆角 16 + 深色底 `$script:G.Card` + 1px 描边 + 柔和投影；自绘标题栏可拖动（`DragMove()`），右上角 ✕ 关闭；`-NoBar` 用于自身已画标题的窗口。
+- 接入 6 个窗口：历史（`Show-PlanHistoryWindow`）、聊天记录（`Show-ChatLogWindow`）、目标（`Show-GoalsWindow`）、模板（`Show-TemplatesWindow`）、设置（`Show-SettingsWindow`）、加任务（`Show-AddTaskWindow`）。原来都是系统标题栏 + 直角边框。
+- 面板入场动画防闪：`panel` 模式切换时先把 `$script:PanelOuter.Opacity` 置 0 再 `Show()`，避免 Show 到 BeginAnimation 之间有一帧全不透明。
+
+### 为什么
+用户反馈「窗口边框全都是这种太难看了」，且点击小球回到面板时动画像闪一下。统一样式后所有弹窗和面板是一套视觉。
+
+### 怎么验证
+- `Parser::ParseFile` 输出 `PS parse OK`（BOM `EF BB BF`）。
+- `guide_overlay restart` 成功；点「历史」「目标」实测：窗口无系统标题栏、圆角 16、深色不透明底、右下投影，标题与 ✕ 自绘，内容排版不变。
+- 设置/模板/加任务同样接入，逻辑未改。
+
+### 怎么恢复
+- `git revert`；把各窗口恢复成 `[System.Windows.Window]::new()` + 系统标题栏即可，`New-GWindow` 可整段删除。
+
+### 附带修复
+- `New-GWindow` 参数原名 `$Title` 与函数内 `$title`（TextBlock）在 PowerShell 里大小写不敏感、实为同一变量，导致 `$title.Text = $Title` 报「找不到属性 Text」；参数改名为 `$Caption`。
