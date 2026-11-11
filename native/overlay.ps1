@@ -1050,42 +1050,97 @@ function Show-ChatLogWindow {
         $entries = @()
     }
 
-    $sb = [System.Text.StringBuilder]::new()
-    foreach ($item in (@($entries) | Select-Object -Last 40)) {
-        $when = ''
-        try { $when = ([datetime]$item.at).ToLocalTime().ToString('MM-dd HH:mm') } catch { $when = '' }
-        [void]$sb.AppendLine(('[{0}]  {1}·{2}' -f $when, $item.role, $item.via))
-        [void]$sb.AppendLine($item.text)
-        [void]$sb.AppendLine('')
-    }
-    if ($sb.Length -eq 0) {
-        [void]$sb.AppendLine('还没有记录。')
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('用面板上的「说」说一句，或者在输入框里打字发一条，这里就会出现。')
-    }
-
     if ($null -ne $script:ChatLogWindow) {
         try { $script:ChatLogWindow.Close() } catch { }
         $script:ChatLogWindow = $null
     }
 
-    $gw = New-GWindow ('教学助手 · 对话记录（{0} 条）' -f @($entries).Count) 620 480
+    $gw = New-GWindow ('教学助手 · 对话记录（{0} 条）' -f @($entries).Count) 640 540
     $win = $gw.Window
     $win.FontFamily = 'Microsoft YaHei'
 
-    $box = [System.Windows.Controls.TextBox]::new()
-    $box.Text = $sb.ToString()
-    $box.IsReadOnly = $true
-    $box.AcceptsReturn = $true
-    $box.TextWrapping = [System.Windows.TextWrapping]::Wrap
-    $box.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
-    $box.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
-    $box.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 226, 233, 242))
-    $box.BorderThickness = [System.Windows.Thickness]::new(0)
-    $box.Padding = [System.Windows.Thickness]::new(14, 12, 14, 12)
-    $box.FontSize = 13
-    $box.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Top
-    $gw.Body.Content = $box
+    $scroll = [System.Windows.Controls.ScrollViewer]::new()
+    $scroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+    $scroll.HorizontalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Disabled
+    $scroll.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 20, 24, 31))
+    $scroll.Padding = [System.Windows.Thickness]::new(12, 10, 12, 10)
+
+    $stack = [System.Windows.Controls.StackPanel]::new()
+    $recent = @($entries | Select-Object -Last 40)
+    if ($recent.Count -eq 0) {
+        $empty = [System.Windows.Controls.TextBlock]::new()
+        $empty.Text = '还没有记录。用面板上的「说」说一句，或者在输入框里打字发一条，这里就会出现。'
+        $empty.Foreground = $script:G.TextDim
+        $empty.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $empty.FontSize = 12
+        [void]$stack.Children.Add($empty)
+    } else {
+        foreach ($item in $recent) {
+            $when = ''
+            try { $when = ([datetime]$item.at).ToLocalTime().ToString('MM-dd HH:mm') } catch { $when = '' }
+            $role = [string]$item.role
+            $via = [string]$item.via
+            $msgText = [string]$item.text
+
+            $card = [System.Windows.Controls.Border]::new()
+            $card.Background = $script:G.Card
+            $card.CornerRadius = [System.Windows.CornerRadius]::new(8)
+            $card.Padding = [System.Windows.Thickness]::new(10, 8, 10, 8)
+            $card.Margin = [System.Windows.Thickness]::new(0, 0, 0, 7)
+
+            $grid = [System.Windows.Controls.Grid]::new()
+            $colText = [System.Windows.Controls.ColumnDefinition]::new()
+            $colText.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            $colBtn = [System.Windows.Controls.ColumnDefinition]::new()
+            $colBtn.Width = [System.Windows.GridLength]::Auto
+            [void]$grid.ColumnDefinitions.Add($colText)
+            [void]$grid.ColumnDefinitions.Add($colBtn)
+
+            $textStack = [System.Windows.Controls.StackPanel]::new()
+            $meta = [System.Windows.Controls.TextBlock]::new()
+            $meta.Text = ('{0}  ·  {1}·{2}' -f $when, $role, $via)
+            $meta.FontSize = 10.5
+            $meta.Foreground = $script:G.TextMute
+            [void]$textStack.Children.Add($meta)
+
+            $body = [System.Windows.Controls.TextBlock]::new()
+            $body.Text = $msgText
+            $body.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $body.FontSize = 12.5
+            $body.Margin = [System.Windows.Thickness]::new(0, 4, 6, 0)
+            $body.Foreground = $script:G.Text
+            [void]$textStack.Children.Add($body)
+
+            [System.Windows.Controls.Grid]::SetColumn($textStack, 0)
+            [void]$grid.Children.Add($textStack)
+
+            if ($role -eq '我' -and -not [string]::IsNullOrWhiteSpace($msgText)) {
+                $play = New-GTextButton '▶ 重播' '重新播报这条'
+                $play.Tag = $msgText
+                $play.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+                $play.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+                $play.Add_PreviewMouseLeftButtonUp({
+                    param($s, $e)
+                    $e.Handled = $true
+                    try {
+                        $t = [string]$s.Tag
+                        if (-not [string]::IsNullOrWhiteSpace($t)) {
+                            Send-OverlayEvent @{ type = 'replay_say'; text = $t }
+                            Write-Log ('replay clicked: ' + $t.Length + ' chars')
+                        }
+                    } catch { }
+                })
+                [System.Windows.Controls.Grid]::SetColumn($play, 1)
+                [void]$grid.Children.Add($play)
+            }
+
+            $card.Child = $grid
+            [void]$stack.Children.Add($card)
+        }
+    }
+
+    $scroll.Content = $stack
+    $gw.Body.Content = $scroll
     $script:ChatLogWindow = $win
     [void]$win.Show()
 }

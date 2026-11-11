@@ -502,6 +502,13 @@ export function apply(ctx, config = {}) {
       case 'voice':
         void handleVoice(event)
         break
+      case 'replay_say': {
+        const text = String(event.text || '').trim()
+        if (!text) break
+        log(`replay: ${text.length} 字 ${text.slice(0, 30)}`)
+        speakText(text, { silent: true })
+        break
+      }
       case 'listen':
         void handleListen()
         break
@@ -1545,7 +1552,7 @@ export function apply(ctx, config = {}) {
     speakChunk(next)
   }
 
-  function speakText(rawText) {
+  function speakText(rawText, options = {}) {
     const chunks = speechChunks(rawText)
     if (!chunks.length || disposed) return null
     stopSpeech()
@@ -1553,7 +1560,7 @@ export function apply(ctx, config = {}) {
     playNextChunk()
     const chars = chunks.join('').length
     log(`speak queue (${chunks.length} 句，${chars} 字，约 ${Math.round(chars / 2.8 + chunks.length * 0.16 + 1)} 秒)`)
-    recordChat('我', '语音', chunks.join(''))
+    if (!options.silent) recordChat('我', '语音', chunks.join(''))
     return subtitleSeq
   }
 

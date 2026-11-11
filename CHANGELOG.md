@@ -2319,3 +2319,20 @@ F12：知识库文件多了以后「找得到」比「存得下」更重要；�
 
 ### 怎么恢复
 - `git revert`；把 `panel` 分支改回「先 Play-BallExit 再延迟 Show」即可。
+
+## 2026-11-11 19:10 对话记录支持单条重播
+
+### 改了什么
+- `native/overlay.ps1` `Show-ChatLogWindow`：从只读 TextBox 改成可滚动卡片列表（640×540）。每条显示「时间 · 角色·来源 + 正文」，AI 播报类条目右侧带「▶ 重播」按钮（`New-GTextButton`），点击发 `Send-OverlayEvent @{ type='replay_say'; text=... }`，并写日志 `replay clicked: N chars`。
+- `index.js`：`handleEvent` 新增 `case 'replay_say'`，调 `speakText(text, { silent: true })`；`speakText` 增加 `options.silent`，重播时不重复写 `chatlog.json`。
+- 顺手修 `index.js` 一处：`speakText` 的 `recordChat` 受 `silent` 控制。
+
+### 为什么
+用户注意力不在电脑上时容易听漏播报，需要在对话记录里点一条重听，而不是让我重新说一遍。
+
+### 怎么验证
+- `PS parse OK`、`node --check index.js`、BOM/LF 正常；`guide_overlay restart` + 改 `cordis.patch.yml` 的 `reload:` 行热重载（19:06:08 disposed → ready）。
+- 实机：打开「记录」→ 点第一条「▶ 重播」→ `overlay.log` 记 `replay clicked: 131 chars`，`plugin.log` 记 `replay: 131 字 …` 与 `speak queue (5 句，131 字，约 49 秒)`，TTS 缓存命中直接出声。
+
+### 怎么恢复
+- `git revert`；把 `Show-ChatLogWindow` 换回 TextBox、删掉 `case 'replay_say'` 即可。
