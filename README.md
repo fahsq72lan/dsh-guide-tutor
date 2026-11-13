@@ -136,6 +136,25 @@ off() // 取消注册
 
 注意：端口 `41999` 被占用时会自动 +1，已装的应用还指旧端口——想装成应用就保持默认端口；DSH 没开时点图标会连不上，先开 DSH。
 
+## 开发与发布：work 攒改动，一次 squash 进 main
+
+想让 GitHub 上的提交记录保持干净（不因为小修小补刷屏），用两条分支：
+
+- **`work`**：日常改动都提交在这里，可以很碎、很频繁，只在本机，不推 GitHub；
+- **`main`**：只接收"打包"后的提交，每个提交对应一批完整改动。
+
+发布时运行：
+
+```powershell
+.\tools\publish.ps1 -Message "feat(plan): 清单支持拖拽改时间"
+```
+
+脚本做的事：`work` 上有改动就补一个 `wip:` 提交（本地备份，可回滚）→ 切到 `main` → `git merge --squash work` → 用 `-Message` 作为提交信息提交一次 → 推送 → 把 `work` 重置到 `main`。
+
+只想本地看看、先不推送，加 `-NoPush`。
+
+> 注意：这台机器装了 Watt Toolkit，它会替换 GitHub 的证书，脚本里已经带上 `-c http.sslBackend=openssl -c http.sslVerify=false -c http.version=HTTP/1.1`；手动 `git push` 时也记得带。
+
 ## 本机 HTTP API
 
 默认地址 **<http://127.0.0.1:41999/>**（只监听 127.0.0.1；端口被占用时自动 +1，实际端口见 `plugin.log` 的 `api server listening on ...`）。
