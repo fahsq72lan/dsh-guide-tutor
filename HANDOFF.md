@@ -1,117 +1,100 @@
 # 交接说明（HANDOFF）
 
-> 给下一个工作区会话看。写于 2026-11-11 19:20，版本 **0.22.37**。
-> 详细改动史在 `CHANGELOG.md`（约 100 KB，按日期倒序追加）；这份只写「现在是什么状态、接下来要做什么」。
+> 写给下一个接手的人（或者下一个没有记忆的 AI）。写完于 2026-11-14 16:40。
+> 详细改动在 `CHANGELOG.md`，这里只写「现在是什么、接了要干什么、哪些坑别踩」。
 
 ## 一、这是什么
 
-DSH 桌面插件「教学助手 / guide-tutor」：悬浮球 + 半透明面板 + 桌面清单卡片 + 全屏标注层 + 语音（Edge TTS 晓晓）+ 摄像头巡检 + 都市指令 + 专注环 + 视频库 + 知识库。
+两个 DSH 桌面插件，一个教、一个记。
 
-- 开发目录：`D:\dsh_TestSpace\guide-tutor`
-- 数据目录：`C:\Users\<User>\.dsh\guide-tutor`（`state.json` / `plan.json` / `goals.json` / `daylog-*.jsonl` / `overlay.log` / `plugin.log`）
-- U 盘副本：`E:\dsh插件\guide-tutor`（每次大改后同步，旧版在 `guide-tutor.old-20261109`）
-- 用户：<姓名>，<学号>，<班级>；课表 `C:\Users\<User>\.dsh\guide-tutor\timetable.json`
+| 插件 | 干什么 | 代码 | 数据 |
+|---|---|---|---|
+| **guide-tutor** | 看得见你的屏幕，能在上面画标注、写步骤、说话，教你操作 | `D:\dsh_TestSpace\guide-tutor` | `~\.dsh\guide-tutor\` |
+| **guide-coach** | 记你一天在哪个软件上待了多久，和清单对账，出时间统计 | `D:\dsh_TestSpace\guide-coach` | `~\.dsh\guide-coach\` |
 
-## 二、这一版有什么（0.22.37）
+- tutor 在 GitHub：`github.com/fahsq72lan/dsh-guide-tutor`（公开）
+- coach 只在本机（本地 git，没远程）
+- 用户是学生，两个插件都是给他自己用的
 
-| 模块 | 状态 |
+## 二、架构（改之前先看这节）
+
+```
+DSH 宿主
+  index.js          Cordis 插件，注册工具、跑定时器、开 HTTP
+  ├─ lib/*.js       纯逻辑模块（pixel / l1 / judge / activity / plan / ...）
+  └─ native/overlay.ps1   PowerShell + WPF 浮层（球、面板、卡片、标注、仪表盘）
+
+通信：
+  state.json   宿主写 → 浮层读（250ms 轮询）。**唯一真相**
+  events.jsonl 浮层写 → 宿主读（点按钮、拖拽、点「下一步」都走这里）
+
+端口：tutor 41999 / coach 42000
+```
+
+**五个模块的边界**：
+- `lib/pixel.js` pHash（纯 JS 解 PNG，无依赖）
+- `lib/l1.js` 调智谱 GLM-4.6V-Flash（免费视觉），`askL1/askDone/askLocate/askLabel`
+- `lib/judge.js` 判定封装（置信度 <0.6 交回主模型）
+- `lib/activity.js` 采样 → 分块（5 分钟并、25 分钟切）→ 时间线
+- `lib/plan.js` 清单（在 tutor）
+
+## 三、现在做到哪了
+
+| 能力 | 状态 |
 |---|---|
-| 悬浮球 | 可自由拖动、位置持久化（`state.panel.ballX/ballY`）、滚轮缩放、球下显时钟 |
-| 面板 | 620 宽固定、内容靠右 344、底部滑块 70%–180%；标题栏按钮换成 `New-GTextButton`（圆角、hover 底色）、「下一步」是蓝色主按钮；面板带投影，出现时 320ms 淡入 + 10px 右滑；点球与面板同帧切换（不再等动画） |
-| 窗口外壳 | `New-GWindow`：无边框、圆角 16、深色底、1px 描边、投影、自绘标题栏、可拖、✕；历史/记录/目标/模板/设置/加任务六个窗口统一 |
-| 桌面清单 | **默认收缩 64% 屏高**，底部「く」展开成满屏、字形变「︿」；滚轮滚内容；标题栏可拖、位置持久化（`state.card.x/y`）；每条带 ☐ 打勾 / ✎ 改 / ✕ 删（两段式确认）；空档行右侧有淡「＋」，**双击空档横线可原地输入**（回车保存、Esc 取消、默认 +25 分钟，地点后补） |
-| 顶条 | 显示当前/最近一条任务 + 秒级倒计时，位置与缩放持久化 |
-| 语音 | Edge TTS 晓晓（`native/tts.ps1` + `py/tts_edge.py`，MCI 播放），合成缓存 + 下一句预合成，失败回落 SAPI |
-| 对话记录 | 卡片列表，每条 AI 播报右侧「▶ 重播」→ `replay_say` → `speakText(text,{silent:true})`，不重复写 `chatlog.json` |
-| 知识库 | `guide_kb` 支持 `action=search`：空格拆多词、同一行全部命中；md 直读、docx 用 `docxExtract`，返回行号 + 片段 |
-| 摄像头 | 120 分钟巡检、指纹去重、**不语音播报** |
-| 都市指令 | 按课表+目标派令、催办、`close` 记实 |
-| 实验六报告 | 27 步 / 18 页 / 25 图，已生成在 `D:\dsh_TestSpace\guide-tutor\实验六_<学号>_<姓名>_Spring Boot整合MyBatis-Plus.docx` |
+| 截屏 + 标注 + 面板 + 语音 | 可用，日常在用 |
+| 知识库 / B 站视频 | 可用 |
+| 清单 / 专注环 / 都市指令 / 日记 | 可用（在教练插件里） |
+| 状态监测（前台窗口每 3 秒采样） | 可用，activity jsonl 在长 |
+| 时间线 + 仪表盘（F40） | 可用，42000 能看，卡片能开 |
+| L1 判定「这一步做完了吗」 | 可用，真实拦截过 2 次 |
+| L1 打标签（每 5 分钟，工作/学习/娱乐） | 写了，只成功过几条，超时偶发 |
+| 记录卡片显示标签 | 代码改了，**要重启 DSH 才生效** |
 
-## 三、2026-11-09 至 11-11 这轮改了什么
+## 四、接手要先知道的坑
 
-1. **清单条目可改可删**：`✎` 弹预填窗口发 `plan_update`；`✕` 发 `plan_remove`。
-2. **空档行「＋」**：点空档右侧的淡加号，直接按该段起始时间预填（结束 +25 分钟）。
-3. **清单可收缩**：底部「く」按钮 toggle；内容区套 `ScrollViewer`，滚轮一格 96px。
-4. **拖动真正持久化**：删掉 `Update-Card` 里每轮强设的 `CardWindow.Top = WorkTop`，改为读 `state.card.x/y`；删掉三处「球自动让位到清单左边」。
-5. **清单条目拖拽改时间**（F02）：按住条目上下拖、松手按 5 分钟吸附改 `from/to`；只有一块跟手，落位在重建后、本地乐观更新。
-6. **重复任务与模板**（F03）：每条可设每天/工作日/每周；模板窗口可把某天清单存成模板，铺到今天/明天/后天。
-7. **面板与窗口视觉统一**（第二档）：`$script:G` 设计 token、`New-GTextButton`/`New-GPrimaryButton`/`Add-GShadow`/`New-GWindow`；六个窗口换无边框圆角外壳；修「✕ 点不关」（标题栏 `DragMove()` 吞事件）。
-8. **双击空档原地输入**：不用弹窗，直接在该行出现输入框，回车即存。
-9. **知识库搜索**（F12a）：`guide_kb action=search`，多词同一行命中，md/docx 都搜。
-10. **球→面板连贯切换**：同一帧 `Hide()` 球 + `Show()` 面板 + 320ms 淡入，不再等淡出动画跑完。
-11. **对话记录重播**：每条 AI 播报右侧「▶ 重播」，重听不重复记 chatlog。
+1. **改 `index.js` 或 `lib/*.js` → 必须重启 DSH**，没有热重载。改 `native/overlay.ps1` → 重启浮层就行。
+2. **改 `overlay.ps1` 必须保留 UTF-8 BOM**。丢了 BOM，PowerShell 5.1 按 GBK 读，中文全乱、语法报错。
+3. **`state.json` 会盖掉代码里的默认值**。改了 `DEFAULT_STATE` 还得同步改 state.json，否则看不到变化。
+4. **两个浮层不能重叠**。都是 `AllowsTransparency + Topmost`，贴着会闪。现在 tutor 球在右下、coach 球在左侧。
+5. **`git push` 必须带 TLS 参数**（本机装了 Watt Toolkit 做证书代理）：`-c http.sslBackend=openssl -c http.sslVerify=false -c http.version=HTTP/1.1`，`tools\publish.ps1` 里已内置。
+6. **模板字符串里写 `\/` 会被吞**（`replace(/\/+$/, '')` 编译成 `//+$/` 变注释），要用 `[/]`。
+7. **验证浮层别用 `guide_screen`**——截屏会临时隐藏悬浮层，截出来看不到。用 `EnumWindows` 列窗口，或 PrintWindow 抓。
+8. **UIA 点不动 WPF 的 CheckBox**，`TogglePattern` 不发 Click 事件，要真鼠标点。
+9. **publish.ps1 会拦敏感词和 epub**（防止把得到的书和工具路径推到公开仓库），别绕过它。
 
-## 三·五、T01 拆分进度（0.22.10）
+## 五、还没做完
 
-`index.js` 从 4,872 行降到 **2,762 行**，已拆出 8 个模块：
+| 事 | 备注 |
+|---|---|
+| B36 记录里出现过一次「未来时间」 | 没复现，先观察。以 `state.json` 的 `record.updatedAt` 为准，别看卡片 |
+| 标签显示 | 代码已改（`pushRecord` 读 `labels-*.jsonl` 挂到段上），重启验证 |
+| 插件转型 | 引导改旁路、学习改主路。方案在 `planning\转型-学习优先.md`。**用户明确说现在不动手** |
+| 引导的「开场体检」 | 没做 |
+| 手机端（F32 / v0.25） | 没开始 |
 
-| 模块 | 文件 | 内容 |
-|---|---|---|
-| 日志 | `lib/log.js` | 写入 + 5 MB 轮转 |
-| 状态 | `lib/state.js` | `state.json` 原子写、读写 |
-| 视频库 | `lib/video.js` | 9 个 `video_*` 工具、WBI 签名、字幕 |
-| 知识库 | `lib/kb.js` | `guide_kb`、md/docx 读写 |
-| 专注环 | `lib/focus.js` | `guide_focus`、tick |
-| 摄像头 | `lib/camera.js` | `guide_camera`、巡检 tick |
-| 都市指令 | `lib/edict.js` | `guide_directive`、调度 |
-| 桌面清单 | `lib/plan.js` | `guide_plan`、自然语言解析、软删除恢复、换天归档 |
+## 六、下一步该干什么
 
-`index.js` 仍保留：悬浮层进程管理、面板/标注/语音（TTS + 字幕）、HTTP `apiHandler`、事件分发与工具注册——这些是装配层，按 T01 原方案不拆。
+**先问用户**。他有明确的优先级（`planning\打磨计划-2026-11.xlsx` 的 `5-版本计划`），而且说过「大方向我主导 80%，你提建议 20%」。
 
-## 四、还没做 / 待用户拍板
+当前版本 v0.28（看得懂的判断）刚完成，下一个是 v1.0「可维护」：`index.js` 拆到 800 行以内、overlay 拆成 4 个文件、冒烟覆盖 20 个工具。
 
-- ~~删除无二次确认~~：已做（B01 两次点击、B02 24h 软删除恢复、B03 已随换天过期）。
-- **球不再自动躲清单**：拖到清单底下会被盖住。可选：点球置顶 / 重叠时轻推。
-- **AI 协作功能**：三选项（本机装 ollama / 给免费 API key / 只做分流提示）用户未选，功能未实现；方案在 `AI协作功能方案-2026-11-09.xlsx`。
-- **F12b 知识库版本回滚**：F12 只做了搜索，回滚（保存历史版本、可恢复）还没做，P2/M。
-- **F10b 箭头沿线流光**：F10 只做了编号 + 淡出；流光要求「只动 StrokeDashOffset 或一个小光点，不逐层重绘」，P3/M。
-- **「下一步」卡死**：`index.js` `handleNextStep()` 先写 `busy:true` 再 `followup`，回合被打断时没有超时兜底，面板会永久停在「收到，正在准备下一步…」。用户报告过（m00201），尚未修；建议 90–120 秒 watchdog。
-- **清单条目被误删过两次**（16:33、16:58，各 4–5 条），已按 daylog 恢复。**新会话先核对一遍 `plan.json`。**
+**别自作主张开新功能**——他这段时间反复说「功能太多、没主线」。
 
-## 五、改这个插件的操作手册
-
-```
-# 改 native/*.ps1（必须带 UTF-8 BOM，编辑器会丢）
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\dsh_TestSpace\guide-tutor\tmp\check-ps.ps1
-# 看到 "PARSE OK: overlay.ps1" 才算过
-guide_overlay restart
-
-# 改 index.js（改了不会自动热重载）
-# 要动 C:\Users\<User>\.dsh\profiles\desktop\cordis.patch.yml 第 44 行的 reload: 文本
-# 判断成功的标志：plugin.log 出现 guide-tutor disposed → ready
-
-# 看悬浮层日志
-C:\Users\<User>\.dsh\guide-tutor\overlay.log
-```
-
-## 六、踩过的坑（新会话别重复）
-
-- **`String.Replace` 做多行替换会静默 MISS**：改用 `[System.IO.File]::ReadAllLines` + `List.InsertRange`，插入前 `.Contains()` 校验目标行。
-- **WPF 事件订阅**：`$x.PreviewMouseWheel += {…}` 会报「找不到属性」，必须 `$x.Add_PreviewMouseWheel({…})`。
-- **误插代码到别的函数**：这轮把「く」按钮那段误插进了面板窗口，面板底部多一个「く」；改完一定看窗口层次。
-- **`-like` 里的 `[`** 是通配符字符集，匹配含 `[System.Windows…]` 的字符串要用 `.Contains()`。
-- **分层窗口**：`ShowActivated=false` 时未激活窗口可能收不到 `WM_MOUSEWHEEL`；`guide_screen` 会主动隐藏悬浮层，截图验证要用 `CopyFromScreen`。
-- **坐标**：overlay 进程 1 逻辑单位 = 1.5 物理像素；窗口枚举出来的 `GetWindowRect` 是物理像素，`state.json` 里存的是逻辑像素。
-- **`$script:G.*` 是画刷不是颜色**：token 里存的是 `SolidColorBrush`，直接赋值给 `Background`/`Foreground`；不要再 `[SolidColorBrush]::new($script:G.Card)` 包一层（报「无法将 SolidColorBrush 转换为 Color」）。
-- **别用 python / 批量替换改 `native/overlay.ps1`**：`Get-Content -Raw` + `WriteAllText` 会把文件写成 GBK 或丢 BOM，解析报几十条假错；只用 `edit` 工具，改完补 `EF BB BF`，再 `Parser::ParseFile`。
-- **DispatcherTimer 在脚本块里不可靠**：`Tick` 不触发过，导致球不隐藏、面板延迟；需要同帧切换就直接 `Hide()`/`Show()`，别排延迟。
-- **`ShowActivated=false` 的窗口收不到点击**：测按钮前先点一下激活，或用 UIA 的 `InvokePattern`。
-- **MySQL 没开机自启**：`D:\mysql8\bin\mysqld.exe --defaults-file=D:\mysql8\my.ini`。
-
-## 七、验证基线（交付前跑一遍）
+## 七、怎么跑起来
 
 ```powershell
-# 1) 清单还是 4 条
-(Get-Content C:\Users\<User>\.dsh\guide-tutor\plan.json -Raw -Encoding UTF8 | ConvertFrom-Json).items | % { "$($_.from)-$($_.to) $($_.title)" }
-# 2) 窗口位置对得上 state
-#    card.x/y、panel.ballX/ballY 与 EnumWindows 的 GetWindowRect 应能对上（×1.5）
-# 3) 无异常日志
-Get-Content C:\Users\<User>\.dsh\guide-tutor\overlay.log -Tail 20 -Encoding UTF8
+# 看 tutor 日志
+Get-Content ~\.dsh\guide-tutor\plugin.log -Tail 20
+# 看 coach 日志
+Get-Content ~\.dsh\guide-coach\plugin.log -Tail 20
+
+# 重启浮层（不用重启 DSH）
+# 杀进程后宿主会自动拉起
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+  Where-Object { $_.CommandLine -like '*overlay*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# 发布 tutor
+powershell -File tools\publish.ps1 -Message "..."
 ```
-
-## 八、和用户协作的约定
-
-- **计划表开着时不要干等**：用户 2026-11-10 明确要求——发现 `~$打磨计划-2026-11.xlsx` 锁着，就先把 Excel 关掉（COM `Quit()`，不行再 `Stop-Process excel`），趁空档改表，改完 `Start-Process` 重新打开；两边都不影响。不要再问「你关一下表」。
-- **两份表必须同步**：根目录 `打磨计划-2026-11.xlsx` 与 `planning\打磨计划-2026-11.xlsx`，改一份就要改另一份。
-- **改表后看换行**：`openpyxl` 保存不会破坏格式，但 `edit` 工具会把 `native/*.ps1` 转成 CRLF，改完要 `node` 转回 LF 再提交。

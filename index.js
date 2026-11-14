@@ -14,6 +14,8 @@ import { createCamera } from './lib/camera.js'
 import { createEdict } from './lib/edict.js'
 import { createPlan } from './lib/plan.js'
 import { parsePlanText } from './lib/plan-parse.js'
+import { createJudge } from './lib/judge.js'
+import { askLabel } from './lib/l1.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NATIVE_DIR = path.join(HERE, 'native')
@@ -67,6 +69,92 @@ export function apply(ctx, config = {}) {
   const eventsPath = path.join(dataDir, 'events.jsonl')
   const logPath = path.join(dataDir, 'plugin.log')
   const log = createLogger(logPath)
+
+  // ---- L1 视觉子模型（默认关闭；打开后只在「看一眼就能答」的地方替主模型干活）----
+  const aiConfig = config.ai && typeof config.ai === 'object' ? config.ai : {}
+  const aiL1 = aiConfig.l1 === 'on'
+  const judge = aiL1
+    ? createJudge({
+        log: (m) => log(`[judge] ${m}`),
+        getConfig: () => ({
+          apiKey: aiConfig.apiKey || '',
+          baseUrl: aiConfig.baseUrl || 'https://open.bigmodel.cn/api/paas/v4',
+          model: aiConfig.model || 'glm-4.6v-flash',
+        }),
+      })
+    : null
+  if (aiL1) log('L1 已开启（glm-4.6v-flash）')
+
+  // ---- 记录打标签：每 5 分钟截一张，让 L1 说「这会儿在干什么」----
+  const LABEL_INTERVAL_MS = 5 * 60 * 1000
+  const labelConfig = () => ({
+    apiKey: aiConfig.apiKey || '',
+    baseUrl: aiConfig.baseUrl || 'https://open.bigmodel.cn/api/paas/v4',
+    model: aiConfig.model || 'glm-4.6v-flash',
+  })
+  let labelBusy = false
+
+  function labelsFile(dateKey) {
+    // 标签是「记录」的一部分，跟 activity 放一起（coach 的数据目录），
+    // 这样记录卡片能直接拿进程块和标签对照，不用跨目录拼。
+    const recordDir = path.join(os.homedir(), '.dsh', 'guide-coach')
+    let dir = dataDir
+    try {
+      if (!fs.existsSync(recordDir)) fs.mkdirSync(recordDir, { recursive: true })
+      if (fs.existsSync(recordDir)) dir = recordDir
+    } catch {
+      /* 建不出来就退回自己的目录 */
+    }
+    return path.join(dir, `labels-${dateKey}.jsonl`)
+  }
+
+  function appendLabel(entry) {
+    try {
+      fs.appendFileSync(labelsFile(todayKey(new Date())), JSON.stringify(entry) + '\n', 'utf8')
+    } catch (error) {
+      log(`label append failed: ${error?.message ?? error}`)
+    }
+  }
+
+  /**
+   * 距上次键鼠输入多少秒。coach 的 activity.ps1 每 3 秒写一行，idle 是「秒」。
+   * 读不到就当 0（按在岗处理），宁可多截一张，也别把人在的时候当休息。
+   */
+  function lastIdleSeconds() {
+    try {
+      const key = todayKey(new Date())
+      const file = path.join(path.dirname(labelsFile(key)), `activity-${key}.jsonl`)
+      if (!fs.existsSync(file)) return 0
+      const size = fs.statSync(file).size
+      if (size <= 0) return 0
+      const span = Math.min(size, 8192)
+      const buf = Buffer.alloc(span)
+      const fd = fs.openSync(file, 'r')
+      try {
+        fs.readSync(fd, buf, 0, span, size - span)
+      } finally {
+        fs.closeSync(fd)
+      }
+      const lines = buf.toString('utf8').split('\n').filter((line) => line.trim())
+      if (!lines.length) return 0
+      const row = JSON.parse(lines[lines.length - 1])
+      return Number(row?.idle) || 0
+    } catch {
+      return 0
+    }
+  }
+
+  /** 上一次打过的标签，喂给下一次当上下文——免得每 5 分钟都说一遍「在使用 DeepSeek」 */
+  function lastLabelDetail() {
+    try {
+      const text = fs.readFileSync(labelsFile(todayKey(new Date())), 'utf8').trim()
+      if (!text) return ''
+      const last = JSON.parse(text.split('\n').filter(Boolean).pop())
+      return String(last?.detail || '')
+    } catch {
+      return ''
+    }
+  }
 
   let disposed = false
   const timers = new Set()
@@ -294,7 +382,43 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  async function handleEvent(event) {
+  
+/** 最近一张截图（超过 maxAgeMs 就不用，避免拿旧图判断） */
+function latestShot(maxAgeMs = 90000) {
+  try {
+    const files = fs
+      .readdirSync(shotsDir)
+      .filter((n) => /^shot-.+\.png$/i.test(n))
+      .map((n) => {
+        const full = path.join(shotsDir, n)
+        return { path: full, mtime: fs.statSync(full).mtimeMs }
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+    if (!files.length) return null
+    if (Date.now() - files[0].mtime > maxAgeMs) return null
+    return files[0].path
+  } catch {
+    return null
+  }
+}
+/** 读 PNG 头拿宽高（只读前 24 字节，不解像素） */
+function pngSize(file) {
+  try {
+    const buf = Buffer.alloc(24)
+    const fd = fs.openSync(file, 'r')
+    try {
+      fs.readSync(fd, buf, 0, 24, 0)
+    } finally {
+      fs.closeSync(fd)
+    }
+    if (buf.toString('ascii', 12, 16) !== 'IHDR') return null
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+  } catch {
+    return null
+  }
+}
+
+async function handleEvent(event) {
     switch (event.type) {
       case 'ready':
         failuresSinceReady = 0
@@ -327,6 +451,42 @@ export function apply(ctx, config = {}) {
         const steps = Array.isArray(panel.steps) ? panel.steps : []
         if (steps.length === 0) break
         const delta = Number(event.delta) || 0
+        // 点「下一步」前先问 L1：上一步真做完了吗（只在截图为近 90 秒内时判断）
+        if (delta > 0 && judge) {
+          const goal = String(panel.text || panel.title || '').trim()
+          const shot = latestShot()
+          if (goal && shot) {
+            const verdict = await judge.done({ goal, image: shot, timeoutMs: 8000 })
+            if (verdict && verdict.verdict === 'not_done') {
+              log(`step blocked by L1: ${verdict.reason} (conf ${verdict.confidence})`)
+              // 顺手让 L1 指出「错在哪个区域」，回来画成红框
+              let annots = []
+              try {
+                const loc = await judge.locate({ goal, image: shot, timeoutMs: 8000 })
+                if (loc && Array.isArray(loc.boxes) && loc.boxes.length) {
+                  const size = pngSize(shot)
+                  const scale = size && size.width > 1280 ? size.width / 1280 : 1
+                  annots = loc.boxes.slice(0, 3).map((b) => ({
+                    kind: 'rect',
+                    color: '#FF3B30',
+                    thickness: 3,
+                    x: Math.round((Number(b.x) || 0) * scale),
+                    y: Math.round((Number(b.y) || 0) * scale),
+                    w: Math.round((Number(b.w) || 0) * scale),
+                    h: Math.round((Number(b.h) || 0) * scale),
+                    label: String(b.why || '这里'),
+                  }))
+                }
+              } catch (error) {
+                log(`locate failed: ${error?.message ?? error}`)
+              }
+              writeState({ annots, panel: { text: `⚠ ${verdict.reason || '这一步好像还没完成'}` } })
+              try { speakText('这一步好像还没做完，再看一眼？') } catch {}
+              break
+            }
+            if (verdict) log(`step ok by L1: ${verdict.reason} (conf ${verdict.confidence})`)
+          }
+        }
         const next = Math.max(0, Math.min(steps.length - 1, (Number(panel.stepIndex) || 0) + delta))
         writeState({ panel: { stepIndex: next } })
         break
@@ -553,6 +713,52 @@ export function apply(ctx, config = {}) {
     }
   }
 
+  /** 每 5 分钟截一张，让 L1 给「此刻在干什么」打个标签，写进 labels-YYYY-MM-DD.jsonl */
+  async function labelTick() {
+    if (!aiL1 || labelBusy || disposed) return
+    if (!overlayChild) return
+    // 空闲秒数只作为「补充信息」交给模型，不在这里替它下结论：
+    // 看视频时键鼠同样不动，本地判休息会把「在看 B 站」写成「离开电脑」。
+    const idleSec = lastIdleSeconds()
+    labelBusy = true
+    const started = Date.now()
+    try {
+      const shot = await requestCapture()
+      if (!shot || !shot.path) {
+        log('label skip: no shot')
+        return
+      }
+      const got = await askLabel({
+        image: shot.path,
+        proc: '',
+        prev: lastLabelDetail(),
+        idle: idleSec,
+        timeoutMs: 15000,
+        config: labelConfig(),
+      })
+      if (!got) {
+        log(`label failed (${Date.now() - started}ms)`)
+        return
+      }
+      const entry = {
+        t: new Date().toISOString(),
+        category: got.category,
+        detail: got.detail,
+        shot: path.basename(shot.path),
+        ms: got.ms,
+        idle: idleSec,
+        source: 'vision',
+      }
+      appendLabel(entry)
+      log(`label: ${entry.category} · ${entry.detail} (${got.ms}ms, idle ${idleSec}s)`)
+      broadcast('label', entry)
+    } catch (error) {
+      log(`label tick error: ${error?.message ?? error}`)
+    } finally {
+      labelBusy = false
+    }
+  }
+
   // --------------------------------------------------------------- capture
   // The WPF overlay process owns screen capture: it hides itself, grabs the
   // screen in its own DPI context and downscales the bitmap to the annotation
@@ -560,9 +766,11 @@ export function apply(ctx, config = {}) {
   const pendingCaptures = new Map()
   let captureRequestId = 0
 
-  // T10：截图与巡检照片默认只留 7 天。目录里按修改时间判断，两个子目录都扫
-  // （shots/ 是读屏截图，shots/cam/ 是摄像头巡检），超期就删，避免悄悄堆满磁盘。
-  const SHOT_KEEP_DAYS = 7
+  // T10：截图与巡检照片默认只留 3 天。记录打标签每 5 分钟一张，一天一百四十多张、
+  // 约 160MB；7 天就是 1GB+，所以除了按天淘汰，再加一个张数上限兜底——
+  // 哪天截屏密集（或摄像头巡检多），不至于光靠天数把磁盘吃满。
+  const SHOT_KEEP_DAYS = 3
+  const SHOT_MAX_FILES = 400
 
   function pruneShots(keepDays = SHOT_KEEP_DAYS) {
     const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000
@@ -573,13 +781,26 @@ export function apply(ctx, config = {}) {
       } catch {
         continue
       }
+      const alive = []
       for (const name of names) {
         const file = path.join(dir, name)
         try {
           const stat = fs.statSync(file)
-          if (stat.isFile() && stat.mtimeMs < cutoff) fs.unlinkSync(file)
+          if (!stat.isFile()) continue
+          if (stat.mtimeMs < cutoff) fs.unlinkSync(file)
+          else alive.push({ file, mtimeMs: stat.mtimeMs })
         } catch {
           /* 文件可能正被读走，跳过 */
+        }
+      }
+      if (alive.length > SHOT_MAX_FILES) {
+        alive.sort((a, b) => a.mtimeMs - b.mtimeMs)
+        for (const item of alive.slice(0, alive.length - SHOT_MAX_FILES)) {
+          try {
+            fs.unlinkSync(item.file)
+          } catch {
+            /* 跳过 */
+          }
         }
       }
     }
@@ -2892,11 +3113,23 @@ export function apply(ctx, config = {}) {
       }, ticker.intervalMs)
       log(`ticker started (every ${Math.round(ticker.intervalMs / 1000)}s)`)
     }
+    let labelTimer = null
+    if (aiL1 && config.autoStart !== false) {
+      // 首次延迟 90 秒，避开启动瞬间；之后每 5 分钟一次。
+      later(() => {
+        void labelTick()
+        labelTimer = setInterval(() => {
+          if (!disposed) void labelTick()
+        }, LABEL_INTERVAL_MS)
+      }, 90000)
+      log(`label sampler armed (every ${LABEL_INTERVAL_MS / 60000}min)`)
+    }
     log(`guide-tutor ready (dataDir=${dataDir}, autoStart=${config.autoStart !== false})`)
     return () => {
       disposed = true
       clearInterval(poll)
       if (tickTimer) clearInterval(tickTimer)
+      if (labelTimer) clearInterval(labelTimer)
       for (const timer of timers) clearTimeout(timer)
       timers.clear()
       stopSpeech()

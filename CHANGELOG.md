@@ -2697,3 +2697,227 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么验证**：tutor `git log origin/main -1` = `c0e4700`；coach `git log -1` = `9647978`、`git ls-files` 21 个；两边 `git status --short` 都为空。`[Parser]::ParseFile` 对 publish.ps1 报 0 errors（补回 UTF-8 BOM，否则 Windows PowerShell 5.1 按 GBK 解码中文正则失效、`` 变空串导致「每行都命中」）。
 
 **怎么恢复**：coach 删 `.git` 即回到无版本控制；tutor 用 `git reset --hard b4d05bd` 回发布前，`git push --force` 后远程回退（谨慎，会丢 c0e4700）。
+## 2026-11-14 17:35 L1 视觉子模型落地（pHash + GLM-4.6V-Flash + 判定/定位）
+
+**改了什么**
+- 新增 `lib/pixel.js`（约 190 行）：纯 JS 解 PNG（zlib + 反 filter）+ 32×32 灰度 + 8×8 DCT + 中位数二值化 → 16 位 hex；导出 `phash(file)` / `phashFromPixels` / `decodePng` / `hamming(a,b)`。
+- 新增 `lib/l1.js`（约 190 行）：`askL1({task,goal,image,hint,timeoutMs,config})` 调智谱 GLM-4.6V-Flash，`thinking:{type:'disabled'}`，只收 JSON；`prepareImage()` 把 >250KB 的图缩成 1280 宽 JPEG（缓存到 `~/.dsh/guide-tutor/thumbs/`）；导出 `askDone` / `askLocate`。
+- 新增 `lib/judge.js`（约 70 行）：`createJudge()` 返回 `{done, locate, stats}`，置信度 <0.6 或 L1 失败一律返回 null，交回主模型。
+- 新增 `native/thumb.ps1`（约 35 行）：System.Drawing 缩图，JPEG q70、最大 1280 宽。
+- `index.js`：import `createJudge`；`apply()` 开头加 `config.ai = { l1:'off', apiKey:'', baseUrl:'', model:'' }` 读取与 `judge` 实例（`l1==='on'` 才创建）。
+
+**为什么**
+主模型每步都看截图太贵（一次 15 分钟教学被调 20–40 次）。把「看一眼就能答」的三件事（完成了吗 / 错在哪 / 变了什么）交给免费的 GLM-4.6V-Flash，判断不了就退回主模型，质量不降、token 大降。
+
+**怎么验证**
+- pHash：`tmp/test-pixel.mjs` → 同一张图两次距离 **0**，不同图距离 **34**（>10 即视为不同），单张耗时 **48–83ms**。
+- L1 单次：`tmp/t2.mjs` → 返回合法 JSON，1372 prompt token，延迟 **1.28–1.71s**（第二张起缩图有缓存）。
+- 9 次批量：`tmp/test-l1.mjs`（3 图 × 3 次，间隔 2.5s）→ 有效回答 **4/9**，判断正确 **4/4**（100%），平均延迟 **2293ms**；5 次失败中 2 次超时、1 次 429「账户已达到速率限制」——**免费档有 QPS 限制，调用必须限流 + 失败即退回**。
+- `node --check` 对 pixel.js / l1.js / judge.js / index.js 全部 EXIT 0。
+
+**怎么恢复**
+删 `lib/pixel.js`、`lib/l1.js`、`lib/judge.js`、`native/thumb.ps1`，并把 `index.js` 里 `import { createJudge }` 与 `config.ai` 那段删掉即可回到「主模型全包」。`config.ai.l1` 默认 `'off'`，不配 key 时行为与之前完全一致。
+## 2026-11-14 21:45 L1 接进「下一步」：没做完就不许往下走
+
+**改了什么**
+- `lib/plan.js:80`：`edict.config().tone` → `edict?.config?.()?.tone`（manage 关闭时 edict 为 undefined，plan tick 每次报 `edict is not defined`）。
+- `index.js`：新增 `latestShot(maxAgeMs = 90000)`（取 shots/ 里最近一张 `shot-*.png`，超过 90 秒视为过期返回 null）；`case 'step'` 前加 L1 判断——`delta > 0`（点「下一步」）且 `judge` 存在时，读 `panel.text` 当目标、取最近截图，调 `judge.done({goal, image, timeoutMs:2500})`；返回 `not_done` 就 `writeState({panel:{text:'⚠ …'}})` + `speak('这一步好像还没做完，再看一眼？')` 并 `break`（不推进步骤），返回 null 或 done 则照常推进。
+- `C:\Users\易千纸\.dsh\profiles\desktop\cordis.patch.yml` 的 guide-tutor 节点新增 `ai: { l1: 'on', apiKey: '0583…ExaL', baseUrl, model: 'glm-4.6v-flash' }`。
+
+**为什么**
+这是教学闭环最缺的一环：现在点「下一步」是无条件翻页，不管上一步有没有真做。用免费的 L1 看一眼截图就能挡住「没做完还往下讲」，比每次都调主模型便宜两个数量级。
+
+**怎么验证**
+- 重启后 `plugin.log` 出现 `L1 已开启（glm-4.6v-flash）`（已确认，14:47:50）。
+- `node --check index.js` / `lib/plan.js` 均 EXIT 0。
+- 待实测：教学面板上点「下一步」，上一步没做完时面板正文变 `⚠ …` 且不翻页，日志出现 `step blocked by L1: …`；做完了则出现 `step ok by L1: …` 并正常翻页。
+
+**怎么恢复**
+把 `cordis.patch.yml` 里 `ai.l1` 改成 `'off'` 即完全回到旧行为（不调 L1、不拦步骤）；`case 'step'` 那段 L1 判断也可整段删掉，剩下的就是原来的无条件推进。
+## 2026-11-14 23:25 修 L1 拦截的两处引用错误
+
+**改了什么**
+- `lib/plan.js:80`：`edict?.config?.()` → 固定 `'normal'`。可选链救不了未声明变量，`edict` 在 plan 模块里从来就不是参数，所以每次 plan tick 都抛 `ReferenceError`。
+- `index.js:374`：`speak(...)` → `speakText(...)`（tutor 的语音函数叫 `speakText`，没有 `speak`）。
+- `index.js:375`：`speakText(...).catch(...)` → `try { speakText(...) } catch {}`（`speakText` 是同步函数，返回 null，不是 Promise）。
+
+**为什么**
+接 L1 拦截时手写了两处不存在的符号，导致「点下一步」在拦截分支上直接抛错：日志 `event handler failed: ReferenceError: speak is not defined`，面板不会变成 ⚠ 状态，也不会拦。
+
+**怎么验证**
+- `node --check index.js` / `lib/plan.js` 均 EXIT 0。
+- 往 `events.jsonl` 追加 `{"type":"step","delta":1}` 实测：修复前日志是 `event handler failed: ReferenceError: speak is not defined`；修复后应出现 `step blocked by L1: …` 或 `step ok by L1: …`。
+- 重启后 `plugin.log` 不应再有 `plan tick failed: edict is not defined`。
+
+**怎么恢复**
+两处都是单行改动；`git diff index.js lib/plan.js` 可看，`git checkout -- index.js lib/plan.js` 回退（会把 L1 接入一起回退掉）。
+## 2026-11-14 23:55 拦截后自动圈错位（locate 接入）+ B36 排查结论
+
+**改了什么**
+- `index.js` 新增 `pngSize(file)`（只读 PNG 前 24 字节拿宽高，不解像素）。
+- `index.js` 的 `case 'step'` 拦截分支：判定 `not_done` 后再调 `judge.locate({goal, image: shot, timeoutMs: 2500})`，把返回的 `boxes` 按 `原图宽 / 1280` 换算成屏幕坐标，写成 `annots`（红框 + `why` 文案，最多 3 个），随 `writeState` 一起落到悬浮层；`locate` 失败只记日志，不影响拦截本身。
+
+**为什么**
+拦截只说「没做完」帮助有限，用户还得自己找错在哪。L1 的 `locate` 已经能返回 `{x,y,w,h,why}`，接进来就能直接圈红框，把「检查」变成「指出来」。
+
+**怎么验证**
+- `node --check index.js` EXIT 0。
+- 待实测：教学任务点「下一步」且判定未完成时，屏幕上出现红框圈住错误区域，面板正文 `⚠ …`，日志 `step blocked by L1: …`（若 locate 也成功，会多一条红框）。
+
+**怎么恢复**
+删掉 `case 'step'` 里那段 `try { const loc = await judge.locate(...) }` 即可回到「只拦不圈」；`pngSize` 留着不影响。
+
+**B36（今日记录出现未来时间）排查结论（未复现）**
+- 现状：`state.record.segments` 16 条，时间连续 10:24→15:10，最新一条 `15:00-15:10`，与系统时间 15:11 一致，无未来时间。
+- 当时的现象更可能是**卡片渲染了上一轮 state**：`overlay` 每 250ms 读 `state.json`，而宿主 `pushRecord` 每分钟才写一次；用户 10:56 看到的 11:11 那条，可能是手动改 `state.json` 后 overlay 尚未重读的窗口期。
+- 结论：数据源（`activity-*.jsonl` 与 `blocks()`）没有未来时间，暂标「未复现」，继续观察；若再出现，先看 `state.json` 的 `record.updatedAt` 与 `segments` 实时值，不要看卡片。
+## 2026-11-14 00:20 修 `[object Object]`：judge 的日志包装写坏了
+
+**改了什么**
+- `index.js:77`：`log: (m) => log([judge] )` → `log: (m) => log([judge] )`。
+
+**为什么**
+接 L1 时手写这一行，模板字符串的反引号和 `` 都丢了，变成「把 judge 对象塞进数组再抛给 log」，所以 judge 每打一条日志就变成 `[object Object]`——这也解释了为什么拦截日志里看不到 `step blocked by L1:`，因为那行之前 judge 内部先打了日志，把真正的错误盖住了。
+
+**怎么验证**
+- `node --check index.js` EXIT 0。
+- 重启后触发一次拦截，日志应出现 `[judge] judge.done -> null（…）` 或 `step blocked by L1: …`，不再有裸的 `[object Object]`。
+
+**怎么恢复**
+单行改动，`git diff index.js` 可见；改回 `log([judge] )` 就是原来的坏版本（不建议）。
+## 2026-11-14 00:40 L1 超时从 2.5s 放宽到 8s（根因：首次缩图慢）
+
+**改了什么**
+- `index.js`：`judge.done` / `judge.locate` 的 `timeoutMs` 2500 → 8000（两处）。
+
+**为什么**
+实测链路（`tmp\t-judge.mjs` 直接调 `createJudge().done`）：同一张截图第一次调用 **5295ms**、第二次（缩图已缓存）**3630ms**。原来的 2500ms 必然超时，`judge.done` 返回 null，于是「点下一步」既不拦也不报错，只是静默放行——这就是为什么重启后测不到拦截。
+
+**怎么验证**
+- `node --check index.js` EXIT 0。
+- `tmp\t-judge.mjs` 用真实截图跑：`RESULT:{"verdict":"not_done","confidence":0.9,"reason":"当前界面显示的是 DeepSeek 桌面应用，而不是 Excel…","ms":3630}` —— 判定链确认可用。
+- 待重启后端到端验证：点「下一步」应看到 ⚠ 面板 + 红框 + 日志 `step blocked by L1: …`。
+
+**怎么恢复**
+把两处 `timeoutMs: 8000` 改回 2500 即可（会退回「L1 经常超时、静默放行」的行为）。
+## 2026-11-14 18:35 把 L1 判定登记进打磨计划
+
+**改了什么**：`planning/打磨计划-2026-11.md`：版本路线图新增 `v0.28 看得懂的判断 | F01 F42 | 2–3 天`；P0/P1 清单 F41 后新增 `F42 L1 判定`（P0/S/已完成）；F01 状态从「待确认」改「已完成（选智谱 GLM-4.6V-Flash，免费视觉）」。`planning/打磨计划-2026-11.xlsx`：`1-想法池` 第 48 行插入 F42 全 11 列；F01 行状态改「已完成」、备注写选型结论；`5-版本计划` 在 v0.26 后补 v0.27（原来漏了）与 v0.28。
+
+**为什么**：用户要求「把改动记录到打磨计划中」。L1 判定是这半天的主要产出（新增 4 个文件、改了 index.js 的 step 分支），不登记的话下次看计划会以为 AI 协作还停在「三选一待确认」。
+
+**怎么验证**：openpyxl 读回：`5-版本计划` 版本列为 v0.22→v0.28→v1.0 顺序正确；`1-想法池` 的 F40（46 行）、F41（47 行）、F42（48 行）连续，F42 状态为「已完成」；md 里 `v0.28` 行与 `F42` 行存在。
+
+**怎么恢复**：xlsx 用 `tmp/打磨计划-2026-11.xlsx.bak-before-monitor` 覆盖（仅退到加监测前，会同时丢掉 F33–F42）；只撤 F42 的话，删 `1-想法池` 第 48 行、`5-版本计划` 第 10 行（v0.28），并把 F01 状态改回「待确认」。
+## 2026-11-14 19:55 今日记录加语义标签（每 5 分钟一次 L1）
+
+**改了什么**：①`lib/l1.js` 新增 `PROMPTS.label`（看截图判断「此刻在做什么」，输出 `{"category":"学习|工作|娱乐|休息|其他","detail":"≤12 字"}`）与 `askLabel({image, proc, timeoutMs, config})`（约 20 行）；②`index.js` 新增 `LABEL_INTERVAL_MS = 5*60*1000`、`labelsFile(dateKey)`、`appendLabel(entry)`、`labelTick()`（请求一次截图 → 调 `askLabel` → 追加到 `labels-YYYY-MM-DD.jsonl`），启动段在 `config.autoStart !== false` 时 `later(…, 90000)` 后每 5 分钟跑一次，`dispose` 里 `clearInterval(labelTimer)`。
+
+**为什么**：用户指出「今日记录只是单纯的得到了当前运行的进程，太单一」——进程名分不清「在 B 站看日语课」和「在 B 站刷视频」，用 L1 给每个时间点打语义标签，记录才说得清状态。
+
+**怎么验证**：`node --check index.js` / `lib/l1.js` 均 EXIT 0；用最新截图实跑 `askLabel`：**1513ms** 返回 `{"category":"工作","detail":"使用 DeepSeek 查询判定链结果"}`，与截图内容一致；串行调用（`labelBusy` 锁）避免撞 429。
+
+**怎么恢复**：删 `labels-*.jsonl` 即清空标签；回退代码删 `lib/l1.js` 的 `PROMPTS.label`/`askLabel` 与 `index.js` 的 `labelTick`/`appendLabel`/`LABEL_INTERVAL_MS` 及启动段与 dispose 的 `labelTimer`；`config.ai.l1` 改 `'off'` 即整条 L1 链停用（含打标签）。
+## 2026-11-14 21:20 打磨计划表整理
+
+**改了什么**：`planning/打磨计划-2026-11.xlsx`：①`0-总览` 的计数行更新为「共 45 个想法、23 个问题、12 项技术债」并把「更新于」改为 2026-11-14 20:40；版本路线图补齐 v0.27（时间仪表盘）与 v0.28（看得懂的判断）两行（插入时误与下方行合并，已 `unmerge_cells('A21:F21' / 'A22:F22')` 后重写；v1.0 行一并恢复）。②`1-想法池` 状态「待定」→「想法」；`2-Bug与问题` 「已修复 / 已解决 / 已修（11-14）」统一为「已完成」（共 10 处）；`3-技术债` 无需改。③`5-版本计划` 增「状态」列（v0.22 进行中、v0.26–v0.28 已完成、v0.23–v0.25 与 v1.0 计划中），并修 v0.27 / v0.28 的「验收标准」错位到状态列的问题。④`6-已完成` 按版本号重排（0.17.0 → 0.22.34）。
+
+**为什么**：用户说「看你都没怎么管，得整整齐齐的」——原表状态值有五种写法（已修复/已解决/已修（11-14）/待定/待做），版本路线图缺两版，已完成表版本号乱序。
+
+**怎么验证**：LibreOffice Kit 渲染 `0-总览 A13:H23` 确认 v0.22→v0.28→v1.0 九行完整、无空行；渲染 `5-版本计划 A3:G11` 确认七列齐全、状态与验收各就其位；openpyxl 读回 `6-已完成` 首行为 0.17.0。
+
+**怎么恢复**：`tmp/打磨计划.bak-before-tidy.xlsx`（50,848 B）覆盖即回到整理前。注意：第一版整理曾用「全表重算行高」把所有行撑得极高（总览出现大片空白与竖排文字），已整体回滚后改为只做数据与状态修正，不再批量改行高。
+## 2026-11-14 16:45 重写 HANDOFF（给下一个接手的人/AI）
+
+**改了什么**：D:\dsh_TestSpace\guide-tutor\HANDOFF.md 从 9,836 B（2026-11-12 版，写的是 0.22.37 和 11-09~11-11 的改动）整体重写为 5,177 B，七节：这是什么（两个插件对照表）/ 架构（宿主-浮层-state/events 通信与五个模块边界）/ 现在做到哪了（能力表，含 L1、activity、F40 的真实状态）/ 接手要先知道的坑（9 条）/ 还没做完（5 条）/ 下一步该干什么（先问用户，别自作主张开新功能）/ 怎么跑起来（日志、重启浮层、发布命令）。
+
+**为什么**：用户说「你只需要让以后空白的你理解自己要干什么」——原 HANDOFF 停留在 11-12，没写拆分 guide-coach、L1 判定、仪表盘、标签这些新东西，下一个会话接手会完全接不上。
+
+**怎么验证**：Get-Item HANDOFF.md = 5,177 B；Get-Content -TotalCount 10 确认首段是「写给下一个接手的人（或者下一个没有记忆的 AI）。写完于 2026-11-14 16:40」，七节标题齐全。
+
+**怎么恢复**：旧版 9,836 B 在 git 历史里（git show HEAD~1:HANDOFF.md 或 git log --oneline -- HANDOFF.md 找到对应提交后 git checkout <sha> -- HANDOFF.md）。
+## 2026-11-14 16:52 截图保留期 7 天 → 3 天 + 400 张上限
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js` L717-763：`SHOT_KEEP_DAYS` 由 `7` 改为 `3`，新增 `SHOT_MAX_FILES = 400`；`pruneShots()` 重写——原来只按 mtime 删过期文件，现在同一遍扫描里把未过期的收集进 `alive`，超过 400 张就按 mtime 从最老的开始删（每条 `try/catch` 单独包住，删不动就跳过）。
+
+**为什么**
+用户说「截图不能一直堆」。记录打标签每 5 分钟截一张全屏图，实测一天 30~40 张、约 1.2MB/张；7 天保留期按最坏情况算能到 1GB 以上，磁盘无声无息被吃。3 天 + 400 张双保险，正常使用稳定在 130MB 上下。
+
+**怎么验证**
+- `node --check index.js` EXIT 0。
+- 用同一套规则手动跑了一遍（临时脚本 `%TEMP%\prune.js`），结果：`shots/` 147 张删 37 张（30.5MB）、`shots/cam/` 7 张全删（1.2MB）；删后剩 110 张 / 128.6MB。明细在 `D:\dsh_TestSpace\guide-tutor\tmp\prune-report.json`。
+- 常驻清理点没变：`handleEvent` 的 `ready`（L386）和 `captured`（L398）都会调 `pruneShots()`，所以每截一张就顺带扫一次。
+
+**删除说明（不可恢复）**
+- 本次手动删除 44 个文件：`shots/shot-*.png` 37 个（11-08 至 11-11 的旧读屏图，30.5MB）+ `shots/cam/*.png` 7 个（摄像头巡检照，1.2MB）。均为过期截图，`labels-*.jsonl` 里指向它们的 `shot` 字段会失效，但标签文字本身仍在，卡片显示不受影响。
+
+**怎么恢复**
+- 代码：`git diff index.js` 回退——`SHOT_KEEP_DAYS` 改回 `7`，删掉 `SHOT_MAX_FILES` 与 `alive`/排序那段，即还原成「只按天删」。
+- 文件：删掉的截图没有备份，不可恢复（这也正是清理的目的）；需要新图等下一次截屏即可。
+**另记（触发重载）**：`C:\Users\易千纸\.dsh\profiles\desktop\cordis.patch.yml` L44 的注释时间戳由 `reload: 2026/11/11 19:06:05` 改为 `reload: 2026/11/14 16:52:00 截图保留期改 3 天`。这行注释是配置里原本就写明的「改这行注释可触发插件热重载」开关，没有行为影响；改完 `plugin.log` 出现 `guide-tutor disposed` → `guide-tutor ready` → `overlay ready (pid 23388)`，新代码无需重启 DSH 即生效。恢复：把注释改回原时间戳即可。
+## 2026-11-14 16:55 标签改成「叙事」：说清在做什么，不再泛泛「使用某软件」
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\l1.js` L46-55：`PROMPTS.label` 重写——要求「在做什么动作、对什么对象」、≤16 字、禁止「使用某某软件/处理工作」这类笼统说法、禁止写文件名/代码路径/变量名、只说看得见的。原来只有一句「判断用户此刻在做什么，detail 不超过 12 字」。
+- `D:\dsh_TestSpace\guide-tutor\lib\l1.js` L187-202：`askLabel({ image, proc, prev, timeoutMs, config })` 新增 `prev`（上一张的 detail），把 `proc` 与 `prev` 拼成 hint 交给模型；`detail` 截断上限 20 → 18 字。
+- `D:\dsh_TestSpace\guide-tutor\index.js` L119-129：新增 `lastLabelDetail()`，读当天 `labels-YYYY-MM-DD.jsonl` 最后一行的 `detail`；`labelTick()` 里 `askLabel(...)` 调用处增加 `prev: lastLabelDetail()`。
+
+**为什么**
+用户 16:48 说「希望让智谱观察我做的细节情况（叙事）但不用太细节，在其能力范围内即可」。旧 prompt 下今天 6 条标签有 5 条是「使用 DeepSeek 写作工具 / 使用 DeepSeek 写作」——它只看见屏幕中央的 DeepSeek 窗口，说不出具体在改什么，卡片上就变成了千篇一律的一行字。
+
+**怎么验证**
+- 新旧 prompt 同图对比（`tmp/label-compare.json`、`tmp/label-compare2.json`）：旧「使用 DeepSeek 写作工具」→ 第一版新 prompt「在查看修改日志，了解 native/overlay.ps1 文件的变化」（24 字，还带技术细节）→ 收紧后「在查看今日记录的修改内容」。
+- 直接 `import l1.js` 调 `askLabel({ image: thumbs/shot-20261114-164304-323.jpg, prev: '在查看今日记录的修改内容' })`（脚本 `tmp/try-label.mjs`）：3055ms 返回 `{"category":"工作","detail":"在查看今日记录的修改内容"}`。
+- `node --check index.js`、`node --check lib/l1.js` 均 EXIT 0；热重载后 `plugin.log`：`label sampler armed (every 5min)` → `guide-tutor ready` → `overlay ready (pid 41144)`。
+- 下一次真实采样在重载后 5 分钟内，新标签会写进 `C:\Users\易千纸\.dsh\guide-coach\labels-2026-11-14.jsonl`，卡片刷新后可见。
+
+**另记（触发重载）**：`C:\Users\易千纸\.dsh\profiles\desktop\cordis.patch.yml` L44 注释时间戳改为 `reload: 2026/11/14 16:55:00 标签改叙事`。
+
+**怎么恢复**
+- `git diff lib/l1.js index.js` 回退：`PROMPTS.label` 换回旧句、`askLabel` 去掉 `prev` 与 hint 拼装、`detail` 截断改回 20、`index.js` 删掉 `lastLabelDetail()` 并把调用改回不传 `prev`。
+- 临时验证产物（`tmp/label-compare.json`、`tmp/label-compare2.json`、`tmp/try-label.mjs`）可直接删，不影响功能。
+## 2026-11-14 18:06 空闲时不截图、不调智谱，直接记「休息」
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - `appendLabel()` 之后新增 `lastIdleSeconds()`（约 L120-149）：读 `C:\Users\易千纸\.dsh\guide-coach\activity-YYYY-MM-DD.jsonl` 的**最后一行**——用 `fs.statSync` 拿大小，`fs.openSync` + `fs.readSync` 只读末尾 8192 字节再按行切（文件一天约 860KB，整读没必要）；取 `JSON.parse(last).idle`，异常一律返回 0（按在岗处理）。
+  - `labelTick()`（约 L715-735）：在 `!aiL1 || labelBusy || disposed` 之后、`overlayChild` 检查之前，插入 `idleSec >= 300` 分支——不截图、不调 API，写一条 `{category:'休息', detail:'离开电脑 N 分钟', idle:true, source:'idle', ms:0}` 到 `labels-YYYY-MM-DD.jsonl`，`broadcast('label', entry)` 后 return。
+- 文件其余部分未动。
+
+**为什么**
+用户指出「键鼠空闲没被记入，智谱分不清人在还是不在」。coach 那边已经把空闲切成了独立段，但 tutor 的打标签仍每 5 分钟无条件整屏截图 + 上传智谱：人离开 40 分钟就白花 8 次 API 调用，还会写 8 条「工作」。空闲时直接写「休息」，既省钱也不污染记录。
+
+**怎么验证**
+- `node --check index.js` EXIT 0。
+- 独立脚本复刻 `lastIdleSeconds()` 跑真实文件（`activity-2026-11-14.jsonl`，859754 字节）→ 返回 `idleSeconds 248`，证明尾部 8KB 读取能拿到最后一行。
+- 热重载（改 `cordis.patch.yml` L44 注释为 `reload: 2026/11/14 18:05:00 标签空闲跳过截图`）后 `plugin.log`：`label sampler armed (every 5min)` → `guide-tutor ready (dataDir=C:\Users\易千纸\.dsh\guide-tutor, autoStart=true)` → `overlay ready (pid 2620)`。
+- 触发分支需要真实空闲 ≥300 秒；当时采样 `idle=248`，尚未到阈值，下一次离开 5 分钟以上时日志会出现 `label: 休息 · 离开电脑 N 分钟（idle Ns，跳过截图）`。
+
+**另记（配置）**：`C:\Users\易千纸\.dsh\profiles\desktop\cordis.patch.yml` L44 注释时间戳改动仅用于触发热重载。
+
+**怎么恢复**
+- `git diff index.js` 回退：删 `lastIdleSeconds()` 与 `labelTick()` 开头的 idle 分支即可，其余逻辑不受影响。
+- 已写入的「休息」标签不需要清理；旧标签没有 `idle`/`source` 字段，读取方按缺省处理。
+## 2026-11-14 18:07 更正：空闲不再本地判「休息」，只作为提示交给智谱
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：删掉 `labelTick()` 里 `idleSec >= 300 → 直接写「休息」并 return` 的短路分支；改为照常 `requestCapture()` + `askLabel({ ..., idle: idleSec })`；落盘条目增加 `idle`（秒）与 `source:'vision'`，日志改为 `label: X · Y (Nms, idle Ns)`。
+- `D:\dsh_TestSpace\guide-tutor\lib\l1.js`：
+  - `askLabel({ image, proc = '', prev = '', idle = 0, timeoutMs = 6000, config = null })` 新增 `idle` 参数；`idle >= 120` 时 hint 追加「键鼠已经 N 分钟没动了，但画面可能在放视频或停在长文上，别只看这一点就判休息」。
+  - `PROMPTS.label` 增加第 6 条：键鼠久未动时，屏幕有视频/图片/长文就照实写在看什么；停在桌面、黑屏或明显没变化才写「离开了电脑」；拿不准按屏幕内容写，别一律判休息。
+- 上一版（18:06 条目的「空闲时不截图、不调智谱」）作废，见下。
+
+**为什么**
+用户否决：「不能绕过智谱啊，不然看视频鼠标绝对是不动的啊，数据要给智谱，让智谱判断啊」。本地用 `idle >= 300` 直接写「休息」等于拿一个假设代替观察——看视频、读长文时键鼠同样不动，会把「在看 B 站」记成「离开电脑」，而且省下的那点调用换来的是假数据。
+
+**怎么验证**
+- `node --check index.js`、`node --check lib/l1.js` 均 EXIT 0。
+- 对照实验（`tmp/try-label-idle2.mjs`，同一张截图 `shot-20261114-180454-936.png`）：`idle=0` 返回 `{"category":"工作","detail":"在查看顺手修的问题记录"}`；`idle=900`（假装 15 分钟没动）返回**完全相同**的 detail——说明模型没有因为空闲就一律判休息，仍按屏幕内容判断。
+- 单次真实调用（`tmp/try-label-idle.mjs`）：2934ms 返回 `{"category":"工作","detail":"在查看顺手修的问题记录"}`。
+- 热重载后 `plugin.log`：`label sampler armed (every 5min)` → `guide-tutor ready` → `overlay ready (pid 16028)`（2026-11-14T10:06:07Z）。
+
+**怎么恢复**
+- `git diff index.js lib/l1.js` 回退：恢复 `askLabel` 调用不传 `idle`、删掉 `PROMPTS.label` 第 6 条、删掉 hint 里的空闲句。
+- 已写入的 `source:'vision'` 标签可直接保留；旧标签没有这两个字段，读取方按缺省处理。
+- 临时脚本 `tmp/try-label-idle.mjs`、`tmp/try-label-idle2.mjs` 可直接删。
