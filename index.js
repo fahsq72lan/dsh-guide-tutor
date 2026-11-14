@@ -48,7 +48,7 @@ const DEFAULT_TOPBAR = { x: null, y: null, scale: 1 }
 // overlay window only paints it next to whatever the screen points at.
 const DEFAULT_SUBTITLE = { active: false, text: '', reveal: 0, seq: 0 }
 
-const TUTOR_PROMPT = `【屏幕教学】本环境装有"教学助手"：桌面悬浮球、全屏标注层和半透明步骤面板，由 guide_* 工具控制。\n- 当用户说"教我 / 带我操作 / 帮我做某件事"，或你收到【读屏请求】【语音】【完成确认】消息时，按此流程：guide_screen 截屏 → read_image 看图 → guide_teach 标注并在面板写一步提示。\n- 标注坐标与最近一次截图使用同一像素坐标（原点为虚拟桌面左上角，可直接用截图里的坐标）。\n- 一次只给一步；用户完成后重新截屏确认，再给下一步。多步骤任务把步骤列表放进 panel.steps，当前步放进 panel.stepIndex。\n- 面板文字要短（不超过 30 字），像教练在旁边轻声提示；解释放在聊天回复里。\n- 【收尾】任务达成、用户说"好了/完成了"，或你截屏看到目标已实现时，先 guide_screen 核验，再调用 guide_finish 结束：它会清空标注并把面板折叠回悬浮球。不要一直把标注和面板挂在屏幕上。\n- 【语音】用户可能用语音说话（消息以【语音】开头）：回应要口语化、简短，因为对方可能没在看屏幕。\n- 【面板对话】用户会从面板底部的输入框打字（消息以【面板对话】开头），这是"先沟通、再动手"的通道：新目标先确认理解、把计划写进 panel.steps 并等待用户点开始；回答问题时把短答案写进 panel.text；说"开始/下一步"时才截屏标注。\n- 【目标】确定教学任务后，用 guide_teach 的 goal 字段记录一句话目标（例如"在 Excel 里插入数据透视表"），这样面板和状态页都能显示当前任务。\n- 教学脚本可以存进 guide_kb（Markdown），下次直接读取复用。\n- 不确定屏幕内容时先截屏或直接问用户，不要臆测坐标。\n- 【下一步】用户点面板上的「下一步」＝这步做完了：先 guide_screen 截屏核验，再用 guide_teach 给出下一步标注，并把 panel.stepIndex 推进一格；已经是最后一步或目标达成，就用 guide_finish 收尾。\n- 【常听】面板和托盘都有「常听」开关：打开后每说完一句会自动再听，适合连续口述；用户说"关掉常听"时提醒他在面板或托盘取消勾选。\n- 【口播】每次回复用户前先调用 guide_say。这段是"说"出来给人听的，要像跟熟人聊天，但**总时长控制在 60 秒内**：当前语速约每秒 2.8 字，也就是 150–170 字、8–12 句，每句 ≤30 字。信息要密度高——正文的结论、原因、数字、下一步挑最要紧的塞进去，别用废话铺垫，也别只丢一句概括。可以有"嗯""你看""说实话"这类口头语，可以带情绪和判断，可以反问一句把话头递回去；只略过代码块、表格细节、文件路径。插件会逐句朗读并同步字幕，详细内容留在聊天里。\n- 【摄像头】guide_camera 只在用户要求、或收到【摄像头巡检】消息时用：拍一张→read_image 看→说结论。巡检默认每 2 小时一次，没变化不会叫你，别自己定时、别偷拍。
+const TUTOR_PROMPT = `【屏幕教学】本环境装有"教学助手"：桌面悬浮球、全屏标注层和半透明步骤面板，由 guide_* 工具控制。\n- 当用户说"教我 / 带我操作 / 帮我做某件事"，或你收到【读屏请求】【语音】【完成确认】消息时，按此流程：guide_screen 截屏 → read_image 看图 → guide_teach 标注并在面板写一步提示。\n- 标注坐标与最近一次截图使用同一像素坐标（原点为虚拟桌面左上角，可直接用截图里的坐标）。\n- 一次只给一步；用户完成后重新截屏确认，再给下一步。多步骤任务把步骤列表放进 panel.steps，当前步放进 panel.stepIndex。\n- 面板文字要短（不超过 30 字），像教练在旁边轻声提示；解释放在聊天回复里。\n- 【收尾】任务达成、用户说"好了/完成了"，或你截屏看到目标已实现时，先 guide_screen 核验，再调用 guide_finish 结束：它会清空标注并把面板折叠回悬浮球。不要一直把标注和面板挂在屏幕上。\n- 【语音】用户可能用语音说话（消息以【语音】开头）：回应要口语化、简短，因为对方可能没在看屏幕。\n- 【面板对话】用户会从面板底部的输入框打字（消息以【面板对话】开头），这是"先沟通、再动手"的通道：新目标先确认理解、把计划写进 panel.steps 并等待用户点开始；回答问题时把短答案写进 panel.text；说"开始/下一步"时才截屏标注。\n- 【目标】确定教学任务后，用 guide_teach 的 goal 字段记录一句话目标（例如"在 Excel 里插入数据透视表"），这样面板和状态页都能显示当前任务。\n- 教学脚本可以存进 guide_kb（Markdown），下次直接读取复用。\n- 不确定屏幕内容时先截屏或直接问用户，不要臆测坐标。\n- 【下一步】用户点面板上的「下一步」＝这步做完了：先 guide_screen 截屏核验，再用 guide_teach 给出下一步标注，并把 panel.stepIndex 推进一格；已经是最后一步或目标达成，就用 guide_finish 收尾。\n- 【常听】面板和托盘都有「常听」开关：打开后每说完一句会自动再听，适合连续口述；用户说"关掉常听"时提醒他在面板或托盘取消勾选。\n- 【口播】每次回复用户前先调用 guide_say。这段是"说"出来给人听的，要像跟熟人聊天，但**总时长控制在 60 秒内**：当前语速约每秒 2.8 字，也就是 150–170 字、8–12 句，每句 ≤30 字。信息要密度高——正文的结论、原因、数字、下一步挑最要紧的塞进去，别用废话铺垫，也别只丢一句概括。可以有"嗯""你看""说实话"这类口头语，可以带情绪和判断，可以反问一句把话头递回去；只略过代码块、表格细节、文件路径。插件会逐句朗读并同步字幕，详细内容留在聊天里。
 - 【字幕】字幕自动出现在最近一次标注的旁边；没有标注时出现在屏幕底部中间。\n- 【都市指令】用户设了目标后（面板右上角「目标」窗口，写 goals.json），心跳会到点叫醒你发令：这时按消息里的三件事做——guide_directive action=issue 发令、guide_teach 贴面板、guide_say 念一句。收到【都市指令·催办】就问一句做了没，然后 action=close 记结果。用户主动喊"来条指令"也走同一套。别在没人叫的时候自己定时发。\n- 【专注环】用户说"拉我一下/提醒我专注/别走神"时，用 guide_focus start（默认 25 分钟一轮、每 8 分钟喊一次、90 分钟后自动结束）。它是纯本地闹钟：到点用 TTS 说话，不叫模型、不花 token；人离开电脑（键鼠空闲 5 分钟）或正在上课时自己跳过。用户说"停"就 stop。\n- 【桌面清单】目标可以排成当天的清单，用 guide_plan：add 加一条（from/to 用 HH:mm、place、title），show/hide 控制桌面卡片，done/undo 打勾，remove 划掉。早上 7:00–9:30 今天还没清单时心跳会叫你排一次；到点前 10 分钟提醒、过点 15 分钟追问一次，语气读 edict.json 的 tone。卡片是"伪融入桌面"的半透明清单（无边框+强半透明），不是真嵌进壁纸层，别承诺贴进桌面壁纸。\n- 【Word 知识库】guide_kb 支持 .md 与 .docx，名字可以带子目录（如「Linux/实验五.md」）：要 Word 版步骤就 save 一个 .docx 名字并给 content（Markdown 自动排版成标题/列表/表格）；导入已有 Word 用 source 指向绝对路径；read 一个 .docx 会返回抽取出的文本。\n- 【视频】用户给 B 站链接想“看懂/记住”时：先 video_learn 取字幕（分P用链接里的 ?p=N；没有字幕就说明要登录 Cookie，可用 video_cookie 保存 SESSDATA），长视频用 video_transcript 翻页读完，再用 video_note 写回摘要和要点；之后用 video_recall 回忆、video_show 看详情、video_list 看库存、video_forget 删记录。用户只知道想找什么、没有链接时，先用 video_search 按关键词搜，把结果列给他挑，再 video_learn。视频存在独立视频库，不和教学知识库混放。\n- 【改动日志】用户定了硬规矩：任何对文件的实际修改（代码、配置、文档、清理删除），都要在同一个回合里写进该项目的 CHANGELOG.md（没有就新建；不成项目时写 ~/.dsh/changes/YYYY-MM.md）。每条四段：改了什么（文件+行数或字节）、为什么、怎么验证（命令+结果）、删掉的东西怎么恢复。删文件、改依赖版本、改数据结构必须单独一行。规矩的来历与全文见 ~/.dsh/AGENTS.md。只写在聊天里不算数。`
 
 export const inject = ['tools', 'systemPrompt', 'agents']
@@ -533,6 +533,17 @@ export function apply(ctx, config = {}) {
       case 'volume':
         setSpeechVolume(event.value)
         break
+      case 'clear_annots': {
+        // 用户在面板上点「清」或在托盘菜单里选「清除屏幕标注」：
+        // 立刻把标注清空、面板收起来。不需要等模型来 guide_finish。
+        log('clear annots requested from overlay')
+        writeState({
+          annots: [],
+          panel: { visible: false, busy: false, text: '', steps: [], stepIndex: 0 },
+          captureMode: false,
+        })
+        break
+      }
       case 'quit':
         log('overlay quit requested from the tray menu')
         broadcast('overlay', { running: false, pid: null, ready: false })
@@ -2804,19 +2815,25 @@ export function apply(ctx, config = {}) {
   })
 
   // ------------------------------------------------------------ lifecycle
+  // 管理类工具（清单 / 专注环 / 都市指令 / 日记 / 时钟 / 摄像头）已迁到 guide-coach。
+  // 只有显式 config.manage === true 时才在 tutor 里注册，默认关闭，避免两边同时弹卡片。
+  const manage = config.manage === true
   ctx.effect(() => ctx.tools.register(guideScreenTool))
   ctx.effect(() => ctx.tools.register(guideTeachTool))
   ctx.effect(() => ctx.tools.register(guideKbTool))
   ctx.effect(() => ctx.tools.register(guideSayTool))
   ctx.effect(() => ctx.tools.register(guideOverlayTool))
   ctx.effect(() => ctx.tools.register(guideFinishTool))
-  ctx.effect(() => ctx.tools.register(guideClockTool))
-  ctx.effect(() => ctx.tools.register(guideJournalTool))
-  ctx.effect(() => ctx.tools.register(guideCameraTool))
-  ctx.effect(() => ctx.tools.register(guideDirectiveTool))
-  ctx.effect(() => ctx.tools.register(guideFocusTool))
   for (const tool of videoTools) ctx.effect(() => ctx.tools.register(tool))
+  // 清单归 tutor（用户 2026-11-13 决定：清单在 guide，记录在 coach），始终注册。
   ctx.effect(() => ctx.tools.register(guidePlanTool))
+  if (manage) {
+    ctx.effect(() => ctx.tools.register(guideClockTool))
+    ctx.effect(() => ctx.tools.register(guideJournalTool))
+    ctx.effect(() => ctx.tools.register(guideCameraTool))
+    ctx.effect(() => ctx.tools.register(guideDirectiveTool))
+    ctx.effect(() => ctx.tools.register(guideFocusTool))
+  }
   ctx.effect(() =>
     ctx.systemPrompt.section({ name: 'guide-tutor', order: 900, text: TUTOR_PROMPT }),
   )
@@ -2824,7 +2841,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => {
     const poll = setInterval(pollEvents, 300)
     if (config.autoStart !== false) startOverlay()
-    // 启动即对齐：把 plan.json 的当前状态推给悬浮层，避免卡片显示上一次的旧清单。
+    // 清单归 tutor：启动即对齐，否则卡片会显示上一次的旧清单。
     try {
       pushPlanState(planForToday())
     } catch (error) {
@@ -2839,6 +2856,7 @@ export function apply(ctx, config = {}) {
     let tickTimer = null
     if (ticker.enabled) {
       ticker.startedAt = new Date().toISOString()
+      // 清单与日程提醒归 tutor（始终跑）
       registerTickHandler(() => {
         try {
           checkSchedule(new Date())
@@ -2847,25 +2865,27 @@ export function apply(ctx, config = {}) {
         }
       })
       registerTickHandler(() => {
-        camera.tick().catch((error) => log(`camera tick failed: ${error?.message ?? error}`))
-      })
-      registerTickHandler(() => {
-        try {
-          edict.tick(new Date())
-        } catch (error) {
-          log(`edict tick failed: ${error?.message ?? error}`)
-        }
-      })
-      registerTickHandler(() => {
-        focus.tick(new Date()).catch((error) => log(`focus tick failed: ${error?.message ?? error}`))
-      })
-      registerTickHandler(() => {
         try {
           planTick(new Date())
         } catch (error) {
           log(`plan tick failed: ${error?.message ?? error}`)
         }
       })
+      if (manage) {
+        registerTickHandler(() => {
+          camera.tick().catch((error) => log(`camera tick failed: ${error?.message ?? error}`))
+        })
+        registerTickHandler(() => {
+          try {
+            edict.tick(new Date())
+          } catch (error) {
+            log(`edict tick failed: ${error?.message ?? error}`)
+          }
+        })
+        registerTickHandler(() => {
+          focus.tick(new Date()).catch((error) => log(`focus tick failed: ${error?.message ?? error}`))
+        })
+      }
       fireTick('start')
       tickTimer = setInterval(() => {
         if (!disposed) fireTick('interval')

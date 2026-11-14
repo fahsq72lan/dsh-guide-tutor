@@ -34,6 +34,28 @@ if ($cur -ne "work") {
 }
 
 git add -A
+
+# 发布前拦一道：本地第三方内容（得到电子书下载工具、买的电子书）绝不允许进公开仓库。
+# 命中就中止，并把暂存区退回去，等工作区自己处理。
+$forbiddenText = 'dedao|ActiveUID|得到电子书|得到（电子书）'
+$forbiddenFiles = '\.(epub|mobi|azw3|azw)$'
+$stagedFiles = @(git diff --cached --name-only)
+$badFiles = $stagedFiles | Where-Object { $_ -match $forbiddenFiles }
+# 规则文件自身（publish.ps1 / CHANGELOG.md）会写出禁止词，检查时排除它们
+$skipRuleFiles = '^(tools/publish\.ps1|CHANGELOG\.md)$'
+$textHits = @()
+$cur = ''
+foreach ($line in (git diff --cached -U0)) {
+    if ($line -match '^\+\+\+ b/(.+)$') { $cur = $Matches[1] } elseif ($line -match '^\+' -and $line -match $forbiddenText -and $cur -notmatch $skipRuleFiles) { $textHits += "${cur}: $line" }
+}
+if ($badFiles -or $textHits) {
+  Write-Host "发现不该入库的内容，已中止发布：" -ForegroundColor Red
+  foreach ($f in $badFiles) { Write-Host "  文件: $f" -ForegroundColor Red }
+  foreach ($l in ($textHits | Select-Object -First 10)) { Write-Host "  命中: $l" -ForegroundColor Red }
+  git reset | Out-Null
+  exit 1
+}
+
 if (git status --porcelain) {
   git commit -m "wip: $Message" | Out-Null
   Write-Host "work 上留了一个 wip 提交（只在本机，可回滚）" -ForegroundColor DarkGray

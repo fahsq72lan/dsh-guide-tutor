@@ -1802,8 +1802,11 @@ function Show-GoalsWindow {
     $hc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
     $hc2 = [System.Windows.Controls.ColumnDefinition]::new()
     $hc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $hc3 = [System.Windows.Controls.ColumnDefinition]::new()
+    $hc3.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
     [void]$head.ColumnDefinitions.Add($hc1)
     [void]$head.ColumnDefinitions.Add($hc2)
+    [void]$head.ColumnDefinitions.Add($hc3)
     $title = [System.Windows.Controls.TextBlock]::new()
     $title.Text = '我的目标'
     $title.FontSize = 17
@@ -1818,6 +1821,23 @@ function Show-GoalsWindow {
     $sub.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 255, 255))
     [System.Windows.Controls.Grid]::SetColumn($sub, 1)
     [void]$head.Children.Add($sub)
+
+    # 右上角关闭按钮：之前这个窗口只有底部那个「关闭」，没有右上角 ×。
+    $closeX = [System.Windows.Controls.TextBlock]::new()
+    $closeX.Text = '✕'
+    $closeX.FontSize = 15
+    $closeX.Margin = [System.Windows.Thickness]::new(14, 0, 0, 0)
+    $closeX.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $closeX.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeX.ToolTip = '关闭'
+    $closeX.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    $closeX.Add_PreviewMouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+        try { $script:GoalsWindow.Close() } catch { }
+    })
+    [System.Windows.Controls.Grid]::SetColumn($closeX, 2)
+    [void]$head.Children.Add($closeX)
     [System.Windows.Controls.Grid]::SetRow($head, 0)
     [void]$grid.Children.Add($head)
 
@@ -2162,7 +2182,10 @@ function New-PanelWindow {
     $title.Foreground = [System.Windows.Media.Brushes]::White
     $title.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
     $title.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
-    $title.MinWidth = 84
+    # 标题列是 Star 列；不要设 MinWidth，否则窗口窄时标题会撑出列宽、
+    # 和右边的时间/按钮叠在一起（用户报过「13:09:37 左边字被压」）。
+    $title.MinWidth = 0
+    $title.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
     $title.Cursor = [System.Windows.Input.Cursors]::SizeAll
     [System.Windows.Controls.Grid]::SetColumn($title, 0)
     [void]$header.Children.Add($title)
@@ -2175,7 +2198,7 @@ function New-PanelWindow {
     $clockPanel = [System.Windows.Controls.TextBlock]::new()
     $clockPanel.Text = '--:--'
     $clockPanel.FontSize = 12
-    $clockPanel.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
+    $clockPanel.Margin = [System.Windows.Thickness]::new(10, 0, 12, 0)
     $clockPanel.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(210, 255, 196, 120))
     $clockPanel.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
     $clockPanel.ToolTip = '当前时间（每秒刷新）'
@@ -2221,15 +2244,6 @@ function New-PanelWindow {
     [void]$headerButtons.Children.Add($goals)
 
     # 大小用滑块调（在 footer 下方单独一行），这里不再放按钮。
-
-    $copy = New-GTextButton '⧉' '复制面板内容' 13.0
-    $copy.Margin = [System.Windows.Thickness]::new(2, 0, 2, 0)
-    $copy.Add_PreviewMouseLeftButtonUp({
-        param($s, $e)
-        $e.Handled = $true
-        Copy-PanelText
-    })
-    [void]$headerButtons.Children.Add($copy)
 
     $collapse = New-GTextButton '—' '收起面板，回到小球' 14.0
     $collapse.Margin = [System.Windows.Thickness]::new(0, 0, 0, 0)
@@ -2286,6 +2300,49 @@ function New-PanelWindow {
     $stepsScroll.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
     $stepsScroll.Content = $steps
     [void]$stack.Children.Add($stepsScroll)
+
+    # 清除：垃圾桶图标，放在步骤列表和「下一步」之间（面板中部偏下）。
+    # 步骤没走完时用户能自己收场：清掉屏幕上的箭头/圈/框，面板收回小球。
+    # 图标用 Segoe MDL2 Assets 的 E74D（Delete），不依赖 emoji 字体。
+    $clearRow = [System.Windows.Controls.StackPanel]::new()
+    $clearRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $clearRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $clearRow.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+    $clear = New-GTextButton ([string][char]0xE74D) '清除屏幕上的标注，并收起面板' 16.0
+    $clear.Child.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
+    $clear.Child.Foreground = $script:G.Text
+    $clear.Padding = [System.Windows.Thickness]::new(8, 4, 8, 4)
+    $clear.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(18, 255, 255, 255))
+    $clear.Add_PreviewMouseLeftButtonUp({
+        param($s, $e)
+        $e.Handled = $true
+        # 先本地清：宿主的 clear_annots 分支要重启 DSH 才生效，这里不能干等。
+        try {
+            Update-Annots @()
+            $script:PanelWindow.Hide()
+            if ($null -ne $script:BallWindow) { $script:BallWindow.Show() }
+            # 同步写盘上的 state，否则 300ms 后按旧状态又把面板弹回来。
+            $dataRoot = $env:GUIDE_TUTOR_DATA
+            if ([string]::IsNullOrWhiteSpace($dataRoot)) { $dataRoot = $DataDir }
+            $stateFile = Join-Path $dataRoot 'state.json'
+            if (Test-Path $stateFile) {
+                $disk = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+                $disk.annots = @()
+                if ($null -ne $disk.panel) {
+                    $disk.panel.visible = $false
+                    $disk.panel.mode = 'ball'
+                    $disk.panel.steps = @()
+                    $disk.panel.stepIndex = 0
+                    $disk.panel.text = ''
+                    $disk.panel.busy = $false
+                }
+                ($disk | ConvertTo-Json -Depth 20) | Set-Content $stateFile -Encoding UTF8
+            }
+        } catch { }
+        Send-OverlayEvent @{ type = 'clear_annots' }
+    })
+    [void]$clearRow.Children.Add($clear)
+    [void]$stack.Children.Add($clearRow)
 
     # --- one obvious "next step" button + the always-on voice switch ------
     # The plan lives in panel.steps; this row is the mouse-only way through it
@@ -3717,24 +3774,11 @@ function New-CardWindow {
     [System.Windows.Controls.Grid]::SetColumn($headText, 0)
     [void]$head.Children.Add($headText)
 
-    # 右侧两个按钮：⚙ 打开设置，✕ 收起卡片。
+    # 右侧按钮：模板、⚙ 打开设置、✕ 收起卡片。（「＋ 加一条」已按用户要求去掉）
     $headBtns = [System.Windows.Controls.StackPanel]::new()
     $headBtns.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $headBtns.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
-    $plus = [System.Windows.Controls.TextBlock]::new()
-    $plus.Text = '＋'
-    $plus.FontSize = 15
-    $plus.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
-    $plus.Cursor = [System.Windows.Input.Cursors]::Hand
-    $plus.ToolTip = '加一条任务'
-    $plus.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
-    $plus.Add_PreviewMouseLeftButtonDown({
-        param($s, $e)
-        $e.Handled = $true
-        try { Show-AddTaskWindow } catch { Write-Log ('add task window failed: ' + $_.Exception.Message) }
-    })
-    [void]$headBtns.Children.Add($plus)
     $tplBtn = [System.Windows.Controls.TextBlock]::new()
     $tplBtn.Text = '模板'
     $tplBtn.FontSize = 10.5
@@ -5584,6 +5628,8 @@ function New-TrayIcon {
         }
         $hideItem = New-Object System.Windows.Forms.ToolStripMenuItem '隐藏悬浮层'
         $hideItem.Add_Click({ Send-OverlayEvent @{ type = 'hide' } })
+        $clearItem = New-Object System.Windows.Forms.ToolStripMenuItem '清除屏幕标注'
+        $clearItem.Add_Click({ Send-OverlayEvent @{ type = 'clear_annots' } })
         $quitItem = New-Object System.Windows.Forms.ToolStripMenuItem '退出教学助手'
         $quitItem.Add_Click({
             Send-OverlayEvent @{ type = 'quit' }
@@ -5600,6 +5646,7 @@ function New-TrayIcon {
         [void]$menu.Items.Add($speakItem)
         [void]$menu.Items.Add($sizeMenu)
         [void]$menu.Items.Add($volumeMenu)
+        [void]$menu.Items.Add($clearItem)
         [void]$menu.Items.Add($hideItem)
         [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
         [void]$menu.Items.Add($quitItem)
