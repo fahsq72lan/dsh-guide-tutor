@@ -2685,3 +2685,15 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 结论：视觉可用、JSON 可控、**延迟 1–3.6 秒（均值约 2.6s，略超 2s 目标）**、成本 0。
 
 **怎么恢复**：删 `ai.json` 与两个 poc 脚本即可；key 在智谱控制台可随时吊销。
+## 2026-11-14 17:15 coach 建 git + tutor 发布 + 拦截器误伤修复
+
+**改了什么**：
+1. `D:\dsh_TestSpace\guide-coach`：`git init` → 建 `work` 分支 → 首次提交 `9647978`（21 个文件、11,102 行）；新增 `.gitignore`（排除 node_modules / tmp / tmp-test / shots / *.png / 数据 jsonl / state.json / ai.json）。
+2. `D:\dsh_TestSpace\guide-tutor`：`tools\publish.ps1` 的拦截块修复（见下），执行发布 → `c0e4700`（12 个文件、+816 行）已推到 GitHub，work 同步到 main。
+3. `tools\publish.ps1` 第 44–50 行：新增 ` = '^(tools/publish\.ps1|CHANGELOG\.md)$'`，按 diff 的 `+++ b/路径` 逐行归属，规则文件自身写出的禁止词不再误伤；`` 改为 ``（字符串数组）。
+
+**为什么**：①coach 写了两天、498 KB、零版本控制，改坏无法回退；②tutor 在 work 上攒了两天没发布；③拦截器第一次跑就把`publish.ps1` 和 `CHANGELOG.md` 自己拦住（它们记录了禁止词），导致发布中止。
+
+**怎么验证**：tutor `git log origin/main -1` = `c0e4700`；coach `git log -1` = `9647978`、`git ls-files` 21 个；两边 `git status --short` 都为空。`[Parser]::ParseFile` 对 publish.ps1 报 0 errors（补回 UTF-8 BOM，否则 Windows PowerShell 5.1 按 GBK 解码中文正则失效、`` 变空串导致「每行都命中」）。
+
+**怎么恢复**：coach 删 `.git` 即回到无版本控制；tutor 用 `git reset --hard b4d05bd` 回发布前，`git push --force` 后远程回退（谨慎，会丢 c0e4700）。
