@@ -695,13 +695,10 @@ async function handleEvent(event) {
         break
       case 'clear_annots': {
         // 用户在面板上点「清」或在托盘菜单里选「清除屏幕标注」：
-        // 立刻把标注清空、面板收起来。不需要等模型来 guide_finish。
+        // 只把标注清空，面板和悬浮球保持原样（B36：以前这里连 panel.visible 一起
+        // 置 false，点完垃圾桶整个助手就"消失"了）。
         log('clear annots requested from overlay')
-        writeState({
-          annots: [],
-          panel: { visible: false, busy: false, text: '', steps: [], stepIndex: 0 },
-          captureMode: false,
-        })
+        writeState({ annots: [], captureMode: false })
         break
       }
       case 'quit':

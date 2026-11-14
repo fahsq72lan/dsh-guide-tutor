@@ -2921,3 +2921,22 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - `git diff index.js lib/l1.js` 回退：恢复 `askLabel` 调用不传 `idle`、删掉 `PROMPTS.label` 第 6 条、删掉 hint 里的空闲句。
 - 已写入的 `source:'vision'` 标签可直接保留；旧标签没有这两个字段，读取方按缺省处理。
 - 临时脚本 `tmp/try-label-idle.mjs`、`tmp/try-label-idle2.mjs` 可直接删。
+## 2026-11-14 19:08 修 B37：点垃圾桶清标注，不再连面板和悬浮球一起收走
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`（垃圾桶 handler，约 L2299-2335）：ToolTip 改为「清除屏幕上的标注（面板和悬浮球保留）」；删掉 `$script:PanelWindow.Hide()` 与 `$script:BallWindow.Show()`，也删掉写盘时对 `$disk.panel.visible / mode / steps / stepIndex / text / busy` 的修改，只写 `$disk.annots = @()`；注释里的 B36 更正为 B37。
+- `D:\dsh_TestSpace\guide-tutor\index.js`（`clear_annots` 分支，约 L696-700）：由 `writeState({ annots: [], panel: { visible:false, busy:false, text:'', steps:[], stepIndex:0 }, captureMode:false })` 改为 `writeState({ annots: [], captureMode: false })`。`lib/state.js:39` 的 `write()` 是浅合并，没传 `panel` 就保持原样。
+- `D:\dsh_TestSpace\guide-tutor\planning\打磨计划-2026-11.xlsx` 的「2-Bug与问题」表新增第 27 行 B37（模块 悬浮层 · 面板 / S2 / P1 / 标题「点垃圾桶会连悬浮球一起消失」/ 现象 / 影响 / 修复方案 / 状态 已完成 / 验证方式 / 来源 用户 m01185 截图）。改前备份：`D:\dsh_TestSpace\guide-tutor\tmp\打磨计划-2026-11.before-B37.xlsx`。
+
+**为什么**
+用户 m01185：「这个垃圾桶点了会导致悬浮球直接隐藏。（虽然标注也跟着清理了）我想要直接达到清理的效果」。原 handler 把「清标注」和「收面板、显球」绑成一步，而 `BallWindow.Show()` 当时没能把球放出来，结果标注清了、整个助手从屏幕上消失，只能重启或等宿主恢复。清标注和收面板本来是两件事。
+
+**怎么验证**
+- 补回 UTF-8 BOM 后 `[Parser]::ParseFile` 0 错误；`node --check index.js` EXIT 0。
+- 热重载：`cordis.patch.yml` L44 注释改为 `reload: 2026/11/14 19:08:00 修 B37 垃圾桶不收面板`，`plugin.log` → `overlay exited code=1` → `overlay ready (pid 7860)`（2026-11-14T11:05:43Z）。
+- 实测：`POST http://127.0.0.1:41999/teach` 弹出「清理测试」面板 + 1 个红框标注；鼠标点面板右下垃圾桶（物理坐标 2435,361）后 state.json 由 `annots=1, panel.visible=true` 变为 `annots=0, panel.visible=true, mode=panel`；`plugin.log` 出现 `clear annots requested from overlay`；截屏 `tmp/panel-after-click.png` 面板、步骤、「下一步」按钮都还在，红框已消失。
+- 测试面板已用 `/finish` 收回悬浮球。
+
+**怎么恢复**
+- 代码：`git checkout -- native/overlay.ps1 index.js`（本条目尚未提交时），或 `git revert <本条目 commit>`。
+- 表格：用备份 `tmp\打磨计划-2026-11.before-B37.xlsx` 覆盖，或删掉第 27 行 B37。

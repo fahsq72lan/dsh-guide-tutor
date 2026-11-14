@@ -2302,13 +2302,14 @@ function New-PanelWindow {
     [void]$stack.Children.Add($stepsScroll)
 
     # 清除：垃圾桶图标，放在步骤列表和「下一步」之间（面板中部偏下）。
-    # 步骤没走完时用户能自己收场：清掉屏幕上的箭头/圈/框，面板收回小球。
+    # 只清屏幕上的箭头/圈/框，面板和悬浮球都留在原地——用户清完还要接着用，
+    # 把面板收起来（B37 修）会让人误以为整个助手消失了。
     # 图标用 Segoe MDL2 Assets 的 E74D（Delete），不依赖 emoji 字体。
     $clearRow = [System.Windows.Controls.StackPanel]::new()
     $clearRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $clearRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
     $clearRow.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
-    $clear = New-GTextButton ([string][char]0xE74D) '清除屏幕上的标注，并收起面板' 16.0
+    $clear = New-GTextButton ([string][char]0xE74D) '清除屏幕上的标注（面板和悬浮球保留）' 16.0
     $clear.Child.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe MDL2 Assets')
     $clear.Child.Foreground = $script:G.Text
     $clear.Padding = [System.Windows.Thickness]::new(8, 4, 8, 4)
@@ -2316,26 +2317,16 @@ function New-PanelWindow {
     $clear.Add_PreviewMouseLeftButtonUp({
         param($s, $e)
         $e.Handled = $true
-        # 先本地清：宿主的 clear_annots 分支要重启 DSH 才生效，这里不能干等。
+        # B37：只清标注，不再 Hide 面板 / Show 球。
         try {
             Update-Annots @()
-            $script:PanelWindow.Hide()
-            if ($null -ne $script:BallWindow) { $script:BallWindow.Show() }
-            # 同步写盘上的 state，否则 300ms 后按旧状态又把面板弹回来。
+            # 同步写盘上的 state（只动 annots），否则 300ms 后按旧状态又把标注画回来。
             $dataRoot = $env:GUIDE_TUTOR_DATA
             if ([string]::IsNullOrWhiteSpace($dataRoot)) { $dataRoot = $DataDir }
             $stateFile = Join-Path $dataRoot 'state.json'
             if (Test-Path $stateFile) {
                 $disk = Get-Content $stateFile -Raw -Encoding UTF8 | ConvertFrom-Json
                 $disk.annots = @()
-                if ($null -ne $disk.panel) {
-                    $disk.panel.visible = $false
-                    $disk.panel.mode = 'ball'
-                    $disk.panel.steps = @()
-                    $disk.panel.stepIndex = 0
-                    $disk.panel.text = ''
-                    $disk.panel.busy = $false
-                }
                 ($disk | ConvertTo-Json -Depth 20) | Set-Content $stateFile -Encoding UTF8
             }
         } catch { }
