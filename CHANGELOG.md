@@ -3093,3 +3093,28 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
   - 表格只删工作表 `4-实现与细节` 即回到三页版本；`git checkout HEAD -- planning/目标拆解与格-设计表.xlsx` 可整表回退到 `0dc0319`。
   - `tmp/` 按 `.gitignore` 第 2 行约定不入库，`test-units.mjs` / `try-units.mjs` / `mk-design4.py` 只在本机；入库的是 `lib/units.js`、`CHANGELOG.md` 与表页。
   - 参数若要回退到首版：`hardBelow` 0.60、`pSkill` 先验 Beta(1,1)、`pNovelty` 下限 0.75、`pScale` 用 `estimateUnits()`——不推荐，首版 6/6 全判太难。
+
+
+## 2026-11-15 13:20 前置能力（capability）：把「隐藏项」落成 p_cap
+
+- **改了什么**
+  - 新增 `lib/capabilities.js`（约 190 行）：`CAP_STATE` / `SATISFACTION` / `CAP_PARAMS` / `GENERIC_CAPS` / `stateFromMastery` / `normalizeCaps` / `pCap` / `partitionCaps` / `expandable` / `setCapState` / `capGap`。
+  - `lib/units.js`（248 行）：`pKnow()` 改为 `pCap()` 的薄包装；`estimateWin()` 的 `parts.p_know` 改名为 `parts.p_cap`，并多返回 `caps`（来自 `capGap()` 的缺口对象）；ADVICE 文案改成「缺前置能力：先补「X」，或派一格验证任务确认你会不会」。
+  - `planning/目标拆解与格-设计表.xlsx` 新增第 5 页 `5-前置能力设计`（51 行 × 4 列，11 节：三实体 / 四状态 / p_cap 三条规则 / 迁移规则 / 收敛闸门 / 发现机制 / 界面 / 数据结构 / 代码 / 验证 / 还没定的）；第 4 页末尾第 63 行加注记，标明 p_know 已被 p_cap 取代。
+  - 临时脚本 `tmp/try-caps.mjs`（四状态对比）、`tmp/mk-design5.py`（生成第 5 页），按 `.gitignore` 不入库。
+
+- **为什么**
+  - 旧模型把前置知识按 `knowledge.mastery` 连乘，没学过就是 0，任务一律判 0% 太难。但「不知道我会不会」和「确定我不会」是两回事，前者还能试。
+  - 用户 m02304 明确：隐藏项 = 前置能力（人身上的前置条件），不是环境坑；m02310 要求重新设计。于是把 unknown 单列为 0.75 的状态，只有 lack 才一票否决；`unknown ≥ 2` 时每多一张再乘 0.9^(n-1)，无 lack 时下限 0.2。
+  - 「防无限归因」只留一道闸门：`state=lack` + 用户要推进 + 不是通用能力，三条同时满足才往下拆一张牌。
+
+- **怎么验证**
+  - `node --check lib/capabilities.js`、`node --check lib/units.js` 均 exit 0。
+  - `node tmp/test-units.mjs` → `38 passed`。旧 `requires` 迁移断言数值恰好等价（java-basic 1.0→have、maven 0.5→partial 连乘 0.5、ioc/jpa 0→lack 归零）。
+  - `node tmp/try-caps.mjs`：同一件事四种说法——mastery=0（不会）→ p_cap 0；两张 unknown → 0.506（34%）；一张 have 一张 unknown → 0.75（50%）；一张 have 一张 lack → 0。确认「不知道」和「不会」已经分开算。
+  - 设计表读回 `tmp/design5-dump.txt`：5 页齐全，第 5 页 51×4，第 4 页 63 行注记在位。
+
+- **怎么恢复**
+  - 删 `lib/capabilities.js`；把 `lib/units.js` 的 `pKnow()` 恢复成旧的 `requires × knowledge.mastery` 连乘、`parts.p_cap` 改回 `p_know`（旧实现在 git `10008d0`）。
+  - 设计表回到只有 4 页的版本：`git checkout 10008d0 -- planning/目标拆解与格-设计表.xlsx`；或手动删掉 `5-前置能力设计` 页与第 4 页第 63 行注记。
+  - `tmp/try-caps.mjs`、`tmp/mk-design5.py` 直接删掉，无外部依赖。
