@@ -2579,6 +2579,27 @@ async function handleEvent(event) {
         apply: { type: 'boolean', description: 'decompose：true 时校验通过就写盘，默认只返回校验结果' },
       },
     },
+    // 工具必须声明 output（宿主会校验），漏了就整条注册失败——之前 guide_goal 就漏了。
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => {
+        if (!value || value.ok === false) {
+          const problems = Array.isArray(value?.problems) ? `（${value.problems.join('；')}）` : ''
+          return [{ type: 'text', text: `没成：${value?.error || '未知原因'}${problems}` }]
+        }
+        const lines = []
+        if (Array.isArray(value.lines)) lines.push(...value.lines)
+        if (value.line) lines.push(value.line)
+        if (Array.isArray(value.goals)) {
+          lines.push(...value.goals.map((g) => g.line || `${g.id} ${g.text}`))
+        }
+        if (Array.isArray(value.items)) {
+          for (const item of value.items) lines.push(`${item.stepId} ${item.title}（${item.percent}%）`)
+        }
+        if (value.hint) lines.push(value.hint)
+        return [{ type: 'text', text: lines.length ? lines.join('\n') : '好了' }]
+      },
+    },
     async execute(args = {}) {
       const action = String(args.action || 'list');
       const goalId = String(args.id || '').trim();
@@ -3422,23 +3443,34 @@ async function handleEvent(event) {
   // 管理类工具（清单 / 专注环 / 都市指令 / 日记 / 时钟 / 摄像头）已迁到 guide-coach。
   // 只有显式 config.manage === true 时才在 tutor 里注册，默认关闭，避免两边同时弹卡片。
   const manage = config.manage === true
-  ctx.effect(() => ctx.tools.register(guideScreenTool))
-  ctx.effect(() => ctx.tools.register(guideTeachTool))
-  ctx.effect(() => ctx.tools.register(guideKbTool))
-  ctx.effect(() => ctx.tools.register(guideSayTool))
-  ctx.effect(() => ctx.tools.register(guideOverlayTool))
-  ctx.effect(() => ctx.tools.register(guideFinishTool))
-  for (const tool of videoTools) ctx.effect(() => ctx.tools.register(tool))
+  // 热重载时旧实例可能没被停掉、同名工具还占着名字，`tools.register` 会抛
+  // "duplicates within one layer fail"。以前这个异常直接打断 apply，导致后面的
+  // 悬浮层、ticker、ready 全都不执行——一条工具撞名就把整个插件打死。现在逐个兜住。
+  function registerTool(tool) {
+    try {
+      return ctx.tools.register(tool)
+    } catch (error) {
+      log(`tool "${tool?.name}" 没注册上：${error?.message ?? error}`)
+      return () => {}
+    }
+  }
+  ctx.effect(() => registerTool(guideScreenTool))
+  ctx.effect(() => registerTool(guideTeachTool))
+  ctx.effect(() => registerTool(guideKbTool))
+  ctx.effect(() => registerTool(guideSayTool))
+  ctx.effect(() => registerTool(guideOverlayTool))
+  ctx.effect(() => registerTool(guideFinishTool))
+  for (const tool of videoTools) ctx.effect(() => registerTool(tool))
   // 清单归 tutor（用户 2026-11-13 决定：清单在 guide，记录在 coach），始终注册。
-  ctx.effect(() => ctx.tools.register(guidePlanTool))
+  ctx.effect(() => registerTool(guidePlanTool))
   // 目标拆解：目标 → 阶段 → 步骤，和清单/记录用 stepId 串起来。
-  ctx.effect(() => ctx.tools.register(guideGoalTool))
+  ctx.effect(() => registerTool(guideGoalTool))
   if (manage) {
-    ctx.effect(() => ctx.tools.register(guideClockTool))
-    ctx.effect(() => ctx.tools.register(guideJournalTool))
-    ctx.effect(() => ctx.tools.register(guideCameraTool))
-    ctx.effect(() => ctx.tools.register(guideDirectiveTool))
-    ctx.effect(() => ctx.tools.register(guideFocusTool))
+    ctx.effect(() => registerTool(guideClockTool))
+    ctx.effect(() => registerTool(guideJournalTool))
+    ctx.effect(() => registerTool(guideCameraTool))
+    ctx.effect(() => registerTool(guideDirectiveTool))
+    ctx.effect(() => registerTool(guideFocusTool))
   }
   ctx.effect(() =>
     ctx.systemPrompt.section({ name: 'guide-tutor', order: 900, text: TUTOR_PROMPT }),

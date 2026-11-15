@@ -3280,3 +3280,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 - `git revert <本次提交>`。若只想退回「模型自己判断要不要记」，删掉 L2004-2012 的 `user/message` 分支即可，`userTurnText`/`redactSecrets` 留着不碍事。
+
+## 2026-11-15 15:05 修「工具全掉线」：guide_goal 漏了 output，一条工具把整个 apply 打死
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js` L2580-2606：`guideGoalTool` 补 `output: { schema, render }`（schema 用 `{type:'object',additionalProperties:true}`，render 把 lines/line/goals/items/hint 拼成文本，失败时显示 error + problems）。
+- 同文件 L3421-3452：新增 `registerTool(tool)`，把每处 `ctx.tools.register(...)` 包进 try/catch，失败只 log `tool "X" 没注册上：原因` 并返回空 disposer，不再让一条工具注册失败中断整个 apply。
+
+**为什么**
+- 现象：本会话里 `guide_say` / `guide_plan` / `guide_goal` 全报 `unknown tool`，但 coach 的 `guide_clock` 等正常；`plugin.log` 从 10:36 之后再也没有 `guide-tutor ready`。
+- 真因（日志原话）：`tool "guide_goal" 没注册上：tool "guide_goal" must declare output { schema, render, presentationMeta? }`。`ctx.effect(() => ctx.tools.register(tool))` 的回调同步抛错 → cordis 中止 apply → 排在后面的工具全部不注册、`guide-tutor ready` 也不打。
+- 之前一直误判成「热重载时同名工具撞名」，实际是宿主校验工具定义就失败了。
+
+**怎么验证**
+- 补完后 `node --check index.js` exit 0；`plugin.log` 出现 `guide-tutor ready`，且无任何「没注册上」。
+- 实际调用 `guide_goal action=list` 返回两条目标与进度（0/8 步、0/6 步），工具表的 schema 也已刷新。
+
+**怎么恢复**
+- `git revert <本次提交>`。只回退 output 那段也行：删掉 `guideGoalTool` 里的 `output` 对象即可复现原故障（不建议）。
+
+**仍待重启才能清干净的**
+- `plugin.log` 还有 `api port 41999 busy … 42003` 与 `webserver: duplicate prefix route "/api/guide-tutor"`：14:06 之后那几次重载留下的旧实例仍占着 41999–42002 与 web 路由。新代码的 `apiServers` 清理只能管之后的实例，管不了已经在跑的旧实例。
