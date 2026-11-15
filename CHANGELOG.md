@@ -3609,3 +3609,22 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **踩坑记录**
 - 第一版用「鼠标相对窗口的坐标」算位移，窗口跟着鼠标走 → 相对坐标不变 → 位移恒为 0，看着就是「拖不动」。必须用 `PointToScreen` 拿屏幕坐标。
+
+## 2026-11-15 19:58 拖动位移放大 1.5 倍（DPI 缩放没换算）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - `New-GWindow` 的标题栏拖拽（L2850-2874）与 `Show-GoalsWindow` 的自定义 header 拖拽：MouseDown 时用 `[System.Windows.PresentationSource]::FromVisual($w).CompositionTarget.TransformToDevice.M11` 取当前 DPI 缩放，存进 `$script:BarDrag.Scale`；MouseMove 里把物理像素位移除以它再改 `Left/Top`。两处各约 +8 行。
+
+**为什么**
+上一版用 `PointToScreen` 拿到的是**物理像素**，而 WPF 的 `Window.Left/Top` 是**设备无关像素（DIP）**。这块屏缩放 150%，于是鼠标移 100 逻辑像素、窗口跑 150，看起来「拖不动/跟不上/越拖越偏」。实测：鼠标物理位移 `(−240,+287)`，窗口位移 `(−358,+433)`，比值正好 1.5。
+
+**怎么验证**
+- `[Parser]::ParseInput` 0 错误、BOM 仍是 `239,187,191`。
+- 实测拖动：鼠标物理位移 `(−150,+150)`，窗口位移 `(−145,+152)`，1:1 跟随（截图 `tmp/dragdpi-before.png` → `tmp/dragdpi-after.png`）。
+
+**怎么恢复**
+`git revert` 本次提交。纯 UI 行为，不涉及数据。
+
+**说明**
+拖动后关闭窗口再打开会回到屏幕正中——`New-GWindow` 用的是 `WindowStartupLocation = CenterScreen`，位置不持久化。这是既有行为，本次没改。

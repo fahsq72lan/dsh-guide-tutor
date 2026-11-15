@@ -2660,7 +2660,13 @@ function Show-GoalsWindow {
             if ($e.ChangedButton -ne [System.Windows.Input.MouseButton]::Left) { return }
             $w = $s.Tag
             $sp = $w.PointToScreen($e.GetPosition($w))
-            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top }
+            $scale = 1.0
+            try {
+                $src = [System.Windows.PresentationSource]::FromVisual($w)
+                if ($src) { $scale = $src.CompositionTarget.TransformToDevice.M11 }
+                if ($scale -le 0) { $scale = 1.0 }
+            } catch { }
+            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top; Scale = $scale }
             try { [void]$s.CaptureMouse() } catch { }
         })
     $head.Add_MouseMove({
@@ -2673,8 +2679,10 @@ function Show-GoalsWindow {
             $d = $script:BarDrag
             try {
                 $sp = $d.Win.PointToScreen($e.GetPosition($d.Win))
-                $d.Win.Left = $d.Left + ($sp.X - $d.SX)
-                $d.Win.Top = $d.Top + ($sp.Y - $d.SY)
+                $sc = $d.Scale
+                if (-not $sc -or $sc -le 0) { $sc = 1.0 }
+                $d.Win.Left = $d.Left + (($sp.X - $d.SX) / $sc)
+                $d.Win.Top = $d.Top + (($sp.Y - $d.SY) / $sc)
             } catch { }
         })
     $head.Add_MouseLeftButtonUp({
@@ -2840,7 +2848,13 @@ function New-GWindow([string]$Caption, [double]$Width = 640.0, [double]$Height =
             # 记「屏幕坐标」而不是「窗口内相对坐标」：窗口跟着鼠标动之后，
             # 相对坐标是不变的（鼠标和窗口一起走），那样算出来的位移永远是 0。
             $sp = $w.PointToScreen($e.GetPosition($w))
-            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top }
+            $scale = 1.0
+            try {
+                $src = [System.Windows.PresentationSource]::FromVisual($w)
+                if ($src) { $scale = $src.CompositionTarget.TransformToDevice.M11 }
+                if ($scale -le 0) { $scale = 1.0 }
+            } catch { }
+            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top; Scale = $scale }
             try { [void]$s.CaptureMouse() } catch { }
         })
     $bar.Add_MouseMove({
@@ -2853,8 +2867,10 @@ function New-GWindow([string]$Caption, [double]$Width = 640.0, [double]$Height =
             $d = $script:BarDrag
             try {
                 $sp = $d.Win.PointToScreen($e.GetPosition($d.Win))
-                $d.Win.Left = $d.Left + ($sp.X - $d.SX)
-                $d.Win.Top = $d.Top + ($sp.Y - $d.SY)
+                $sc = $d.Scale
+                if (-not $sc -or $sc -le 0) { $sc = 1.0 }
+                $d.Win.Left = $d.Left + (($sp.X - $d.SX) / $sc)
+                $d.Win.Top = $d.Top + (($sp.Y - $d.SY) / $sc)
             } catch { }
         })
     $bar.Add_MouseLeftButtonUp({
