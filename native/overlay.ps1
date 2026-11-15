@@ -2651,6 +2651,37 @@ function Show-GoalsWindow {
     [System.Windows.Controls.Grid]::SetColumn($closeX, 3)
     [void]$head.Children.Add($closeX)
     [System.Windows.Controls.Grid]::SetRow($head, 0)
+    # 这个窗口是 -NoBar 建的，没有系统标题栏；把自定义的这一行当标题栏：
+    # 按住空白处可拖动（透明背景才能命中间隙）。
+    $head.Background = [System.Windows.Media.Brushes]::Transparent
+    $head.Tag = $gw.Window
+    $head.Add_MouseLeftButtonDown({
+            param($s, $e)
+            if ($e.ChangedButton -ne [System.Windows.Input.MouseButton]::Left) { return }
+            $w = $s.Tag
+            $sp = $w.PointToScreen($e.GetPosition($w))
+            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top }
+            try { [void]$s.CaptureMouse() } catch { }
+        })
+    $head.Add_MouseMove({
+            param($s, $e)
+            if ($null -eq $script:BarDrag) { return }
+            if ($e.LeftButton -ne [System.Windows.Input.MouseButtonState]::Pressed) {
+                $script:BarDrag = $null
+                return
+            }
+            $d = $script:BarDrag
+            try {
+                $sp = $d.Win.PointToScreen($e.GetPosition($d.Win))
+                $d.Win.Left = $d.Left + ($sp.X - $d.SX)
+                $d.Win.Top = $d.Top + ($sp.Y - $d.SY)
+            } catch { }
+        })
+    $head.Add_MouseLeftButtonUp({
+            param($s, $e)
+            $script:BarDrag = $null
+            try { [void]$s.ReleaseMouseCapture() } catch { }
+        })
     [void]$grid.Children.Add($head)
 
     $addBar = [System.Windows.Controls.Grid]::new()
@@ -2795,12 +2826,42 @@ function New-GWindow([string]$Caption, [double]$Width = 640.0, [double]$Height =
     $bar = [System.Windows.Controls.Grid]::new()
     $bar.Height = 44
     $bar.Margin = [System.Windows.Thickness]::new(16, 6, 10, 0)
+    # Grid 默认没有背景 → 空白区不参与命中测试，只有压在文字上才能拖。
+    # 给整条标题栏一个透明背景，空白处也能按下拖动。
+    $bar.Background = [System.Windows.Media.Brushes]::Transparent
     $bar.Tag = $win
+    # 不用 DragMove()：它在 PowerShell 的事件回调里会进模态循环，
+    # 一旦抛「鼠标没按下」就整条窗拖不动（还被 try/catch 吞掉）。
+    # 改成自己算位移、直接改 Left/Top，事件驱动、可测。
     $bar.Add_MouseLeftButtonDown({
-        param($s, $e)
-        if ($e.ChangedButton -ne [System.Windows.Input.MouseButton]::Left) { return }
-        try { $s.Tag.DragMove() } catch { }
-    })
+            param($s, $e)
+            if ($e.ChangedButton -ne [System.Windows.Input.MouseButton]::Left) { return }
+            $w = $s.Tag
+            # 记「屏幕坐标」而不是「窗口内相对坐标」：窗口跟着鼠标动之后，
+            # 相对坐标是不变的（鼠标和窗口一起走），那样算出来的位移永远是 0。
+            $sp = $w.PointToScreen($e.GetPosition($w))
+            $script:BarDrag = @{ Win = $w; SX = $sp.X; SY = $sp.Y; Left = $w.Left; Top = $w.Top }
+            try { [void]$s.CaptureMouse() } catch { }
+        })
+    $bar.Add_MouseMove({
+            param($s, $e)
+            if ($null -eq $script:BarDrag) { return }
+            if ($e.LeftButton -ne [System.Windows.Input.MouseButtonState]::Pressed) {
+                $script:BarDrag = $null
+                return
+            }
+            $d = $script:BarDrag
+            try {
+                $sp = $d.Win.PointToScreen($e.GetPosition($d.Win))
+                $d.Win.Left = $d.Left + ($sp.X - $d.SX)
+                $d.Win.Top = $d.Top + ($sp.Y - $d.SY)
+            } catch { }
+        })
+    $bar.Add_MouseLeftButtonUp({
+            param($s, $e)
+            $script:BarDrag = $null
+            try { [void]$s.ReleaseMouseCapture() } catch { }
+        })
     $tCol = [System.Windows.Controls.ColumnDefinition]::new()
     $tCol.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
     $bCol = [System.Windows.Controls.ColumnDefinition]::new()

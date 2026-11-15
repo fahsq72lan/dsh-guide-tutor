@@ -3588,3 +3588,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **踩坑记录**
 - `TextBlock` 上挂 `MouseLeftButtonUp` 不稳，改成外层套 `Border`（`Background=Transparent`）才稳定命中——「✕」和「✎」都是这么修的。
 - 我给 `$script:EditingChore = $null` 的初始化插错了位置（插进了 `Rebuild-GoalsPanel` 内部），导致每次重画都把编辑态清掉、点了没反应；已删掉那一行。
+
+## 2026-11-15 19:52 目标窗口能拖了（自定义标题栏）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - `New-GWindow`（L2795 起）：给标题栏 `$bar` 补 `Background = Transparent`（Grid 没背景时空白区不参与命中），并把 `DragMove()` 换成手写拖拽——`MouseLeftButtonDown` 记屏幕坐标与窗口 Left/Top、`MouseMove` 里按屏幕位移改 Left/Top、`MouseUp` 释放捕获。约 +30 / −6 行。
+  - `Show-GoalsWindow`（L2653 起）：这个窗口是 `-NoBar` 建的，没有系统标题栏，之前根本没有拖动逻辑。给自定义 header `$head` 挂同一套拖拽，并设 `Background = Transparent`。约 +30 行。
+
+**为什么**
+用户报「目标窗口拖不动了」。查下来：目标窗口用 `-NoBar`，标题栏被隐藏，只有内容区，所以从来没绑过拖动；其它窗口（清单历史、模板、对话记录）虽然有标题栏，但 `DragMove()` 在 PowerShell 事件回调里会进模态循环，一抛异常就被 `try/catch` 吞掉，表现为「按着没反应」。
+
+**怎么验证**
+- `overlay.ps1` 用 `[Parser]::ParseInput` 校验 0 错误、BOM 仍是 `239,187,191`。
+- 实机拖动目标窗口标题栏空白处：窗口物理位置从 `(818,275)` 移到 `(460,708)`，位移 `(−358,+433)`，与鼠标位移一致（截图 `tmp/d2-before.png` → `tmp/d4-after.png`）。
+- 关闭按钮、派发链接仍是 Preview 拦截，不会被拖动吃掉。
+
+**怎么恢复**
+`git revert` 本次提交。拖动是纯 UI 行为，不涉及任何数据。
+
+**踩坑记录**
+- 第一版用「鼠标相对窗口的坐标」算位移，窗口跟着鼠标走 → 相对坐标不变 → 位移恒为 0，看着就是「拖不动」。必须用 `PointToScreen` 拿屏幕坐标。
