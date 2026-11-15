@@ -3301,3 +3301,20 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **仍待重启才能清干净的**
 - `plugin.log` 还有 `api port 41999 busy … 42003` 与 `webserver: duplicate prefix route "/api/guide-tutor"`：14:06 之后那几次重载留下的旧实例仍占着 41999–42002 与 web 路由。新代码的 `apiServers` 清理只能管之后的实例，管不了已经在跑的旧实例。
+
+## 2026-11-15 15:07 daylog 只记人话：过滤宿主注入的时间采样与系统提示
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js` 的 `userTurnText()`（约 L2290-2330）：新增 `INJECTED_HEAD` 前缀表与 `isInjectedText()`，逐块跳过宿主注入的文本（`Time sampled while preparing` / `Current runtime context.` / `Browser time zone for this request` / `Elapsed since the preceding` / `You are an AI agent powered by DeepSeek Harness`，以及整段 `<system-reminder>`）；过滤后为空就不写。
+- 数据清理：`C:\Users\易千纸\.dsh\guide-tutor\daylog-2026-11-15.jsonl` 删掉 1 行脏记录（`{"kind":"say","text":"Time sampled while preparing turn 71…"}`），文件从 2 行回到 1 行（保留 10:18 那条系统 note）。
+
+**为什么**
+- 改成「用户消息自动落盘」后，宿主把时间采样、浏览器时区、system-reminder 垫在同一条 user 消息的 content 里，被整段当成用户说的话记进了日志。日志是给人看的，混进机器话就没法当记忆用。
+
+**怎么验证**
+- `node --check index.js` exit 0；重载后 `plugin.log` 出现 `guide-tutor ready`（06:53:29Z），无「没注册上」。
+- 清理脚本输出 `kept 1 dropped 1`，脏行已消失；`daylog-2026-11-15.jsonl` 现只有 note 那一行。
+- 下一条真实用户消息到达时应出现 `{"kind":"say","text":"<原话>"}`，且不含 `Time sampled…`。
+
+**怎么恢复**
+- `git revert <本次提交>`。被删的那行是机器文本、无信息量；若要原样找回，可从 `plugin.log` 的对应时间段重建。

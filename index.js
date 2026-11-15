@@ -2287,13 +2287,32 @@ async function handleEvent(event) {
     reminderDate = todayKey(new Date())
   }
 
+  // 宿主会把系统提示、时间采样、system-reminder 垫在同一条 user 消息里，
+  // 这些不是用户说的话，不能进 daylog。
+  const INJECTED_HEAD = [
+    'Time sampled while preparing',
+    'Current runtime context.',
+    'Browser time zone for this request',
+    'Elapsed since the preceding',
+    'You are an AI agent powered by DeepSeek Harness',
+  ]
+  function isInjectedText(text) {
+    const s = String(text || '').trim()
+    if (!s) return true
+    if (s.startsWith('<system-reminder>')) return true
+    if (INJECTED_HEAD.some((head) => s.startsWith(head))) return true
+    return false
+  }
+
   // 把一条用户消息摊成纯文本：文字原样留，图片/文件只留占位。
   function userTurnText(message) {
     const blocks = Array.isArray(message?.content) ? message.content : []
     const parts = []
     for (const b of blocks) {
-      if (b?.type === 'text' && b.text) parts.push(String(b.text))
-      else if (b?.type === 'image') parts.push('[图片]')
+      if (b?.type === 'text' && b.text) {
+        if (isInjectedText(b.text)) continue
+        parts.push(String(b.text).trim())
+      } else if (b?.type === 'image') parts.push('[图片]')
       else if (b?.type === 'file') parts.push(`[文件 ${b?.attachment?.name || ''}]`.trim())
     }
     return redactSecrets(parts.join('\n').trim())
