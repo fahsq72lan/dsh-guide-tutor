@@ -3431,3 +3431,41 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 - 代码：`git revert` 本次提交。
 - 数据：自动派进来的四条可以用 `guide_plan action=remove` 划掉；`goalAutoDate` 只在内存里，重启后会重新判断一次。
+
+## 2026-11-15 16:40 加「派发」按钮：自己定今天排多少
+
+**改了什么**
+
+- `index.js`：
+  - `goalCapacity({ now, forceUnits })` 先看 `forceUnits`，再看 `speechSettings.dispatchUnits`，都没有才按空档算（`clamp(round(free*0.6/30), 2, 10)`）。
+  - `autoPlanGoals()` 加 `forceUnits` 透传。
+  - 新增 `clearAutoSteps()`：撤掉今天所有「挂了 stepId 且没勾」的条目。
+  - overlay 事件 `dispatch_goals`：`units=0` 表示回到「按空档自动」，`1–16` 表示固定格数；写 `speechSettings.dispatchUnits` + `saveSpeechSettings()` + `writeState({ dispatchUnits })`，再 `clearAutoSteps()` → `autoPlanGoals()`，写 daylog「派发调整：…」。
+  - `guide_goal` 新增 `dispatch` action（参数 `units`，0 = 自动）。
+  - tick 每 5 分钟、启动时各 `writeState({ dispatchUnits })` 一次，overlay 打开窗口时能读到当前值。
+- `native/overlay.ps1`（+约 120 行）：
+  - 清单卡 header 加「派发」文字按钮（在「模板」前），目标窗口 header 加蓝色「派发」链接（head 从 3 列扩到 4 列，✕ 挪到第 4 列）。
+  - 新增 `$script:DispatchWindow` 与 `Show-DispatchWindow`：420×246 深色卡片，标题「今天派多少」、说明「一格约 30 分钟」、大号「N 格 ≈ X 小时」、Slider 1–16、「按空档自动」与「重新排」两个按钮。
+  - ⚠ 踩坑：handler 里写 `$slider.Value` 取到的是 `$null`（非严格模式下 `[int]$null` = 0），发出去的一直是 `units=0`；改成 `$script:DispatchSlider` 后正常，并加 `if ($v -lt 1) { $v = 6 }` 兜底。
+
+**为什么**
+
+用户说「一天时间有很多，任务太少会太空」，上一版按空档算出的固定 4 步不够直观，也没法自己调。加按钮让他能直接定「今天排几格」，而不是改代码或让我手动 `guide_plan add`。
+
+**怎么验证**
+
+- `node --check index.js` exit 0；`[Parser]::ParseInput` 0 错误；BOM 仍 `239,187,191`。
+- 点「派发」→ `overlay.log` 出现 `dispatch window opened`，窗口显示「6 格 ≈ 3 小时」。
+- 点「重新排」→ `plugin.log` 出现 `dispatch goals: units=6 removed=5 added=5`；`state.json` 的 `dispatchUnits=6`；`plan.json` 目标条目正好 6 格：
+  - 16:40–17:10 下载 Temurin（1 格）
+  - 17:20–17:50 配 JAVA_HOME（1 格）
+  - 18:00–18:30 IDEA 选 JDK（1 格）
+  - 20:00–21:00 建 Spring Boot 空工程（2 格）
+  - 21:10–21:40 写 Controller（1 格）
+  - 杂务三条（倒垃圾 16:25、洗澡 19:00、洗衣服 19:30）没被动。
+
+**怎么恢复**
+
+- 代码：`git revert` 本次提交。
+- 数据：把 `~/.dsh/guide-tutor` 里 speech 设置文件的 `dispatchUnits` 删掉（或点「按空档自动」），就回到按空档算。
+- 已排进清单的条目点「派发 → 重新排」会整批重排，不会留下旧条目。

@@ -746,6 +746,27 @@ async function handleEvent(event) {
         log(`chore done from overlay: ${id}`)
         break
       }
+      case 'dispatch_goals': {
+        // 清单卡上的「派发」按钮：定今天派几格，撤掉没做的、按新数重排。
+        const units = Math.round(Number(event.units))
+        if (!Number.isFinite(units) || units < 0) break
+        const fixed = units === 0 ? 0 : Math.min(16, Math.max(1, units))
+        speechSettings.dispatchUnits = fixed
+        saveSpeechSettings()
+        writeState({ dispatchUnits: fixed })
+        void (async () => {
+          const removed = await clearAutoSteps()
+          const result = await autoPlanGoals({ forceUnits: fixed || null })
+          appendDaylog(
+            'activity',
+            fixed > 0
+              ? `派发调整：每天 ${fixed} 格（撤 ${removed.length} 条，排 ${result.items.length} 条）`
+              : `派发调回按空档自动（撤 ${removed.length} 条，排 ${result.items.length} 条）`,
+          )
+          log(`dispatch goals: units=${fixed} removed=${removed.length} added=${result.items.length}`)
+        })().catch((error) => log(`dispatch goals failed: ${error?.message ?? error}`))
+        break
+      }
       case 'quit':
         log('overlay quit requested from the tray menu')
         broadcast('overlay', { running: false, pid: null, ready: false })
@@ -2708,7 +2729,7 @@ async function handleEvent(event) {
   }
 
   /** 今天还剩多少分钟能装任务：从下一个整十分钟到 22:30，减去已排的清单条目。 */
-  function goalCapacity({ now = new Date() } = {}) {
+  function goalCapacity({ now = new Date(), forceUnits = null } = {}) {
     const dayEnd = 22 * 60 + 30
     const nowMin = now.getHours() * 60 + now.getMinutes()
     const from = Math.max(8 * 60, Math.ceil(nowMin / 10) * 10)
@@ -2728,8 +2749,12 @@ async function handleEvent(event) {
     }
     if (cursor < dayEnd) free += dayEnd - cursor
     // 一步按 1 格 30 分钟估，留 40% 的缓冲（吃饭、走动、临时事变）。
-    const targetUnits = Math.min(10, Math.max(2, Math.round((free * 0.6) / 30)))
-    return { from, to: dayEnd, free: Math.max(0, free), busy, targetUnits }
+    // 用户手动定过「每天派几格」就按他的来，否则按空档算。
+    const manual = Number(forceUnits ?? speechSettings.dispatchUnits)
+    const targetUnits = Number.isFinite(manual) && manual > 0
+      ? Math.min(16, Math.max(1, Math.round(manual)))
+      : Math.min(10, Math.max(2, Math.round((free * 0.6) / 30)))
+    return { from, to: dayEnd, free: Math.max(0, free), busy, targetUnits, manual: Number.isFinite(manual) && manual > 0 }
   }
 
   function clockOfMin(minutes) {
@@ -2749,8 +2774,8 @@ async function handleEvent(event) {
   }
 
   /** 按今天的空档把目标步骤派进清单：填到空档的六成，单次最多 10 格。 */
-  async function autoPlanGoals({ dateKey = todayKey(new Date()), now = new Date() } = {}) {
-    const cap = goalCapacity({ now })
+  async function autoPlanGoals({ dateKey = todayKey(new Date()), now = new Date(), forceUnits = null } = {}) {
+    const cap = goalCapacity({ now, forceUnits })
     if (cap.free < 30) {
       return { ok: true, items: [], lines: [`今天剩下的空档只有 ${cap.free} 分钟，先不派了`] }
     }
@@ -2802,6 +2827,18 @@ async function handleEvent(event) {
     for (const s of skipped) lines.push(`没排：${s.title}（${s.reason}）`)
     if (!added.length) lines.push('没有可派的步骤：目标都做完了、暂停了，或者还没拆')
     return { ok: true, items: added, skipped, slot: cap, lines }
+  }
+
+  /** 把今天「带 stepId 且没完成」的清单条目撤掉，供重新派发用。 */
+  async function clearAutoSteps({ now = new Date() } = {}) {
+    const today = plan.forToday(now)
+    const victims = (today.items || []).filter((i) => i.stepId && !i.done)
+    const removed = []
+    for (const item of victims) {
+      const result = await planRun({ action: 'remove', id: item.id })
+      if (result?.ok) removed.push(item)
+    }
+    return removed
   }
 
   const guideChoresTool = {
@@ -2952,7 +2989,7 @@ async function handleEvent(event) {
       properties: {
         action: {
           type: 'string',
-          description: 'list / show / add / set / scaffold / decompose / validate / split / next / done / undo / progress / skill / cap / remove / spent / review',
+          description: 'list / show / add / set / scaffold / decompose / validate / split / next / dispatch / done / undo / progress / skill / cap / remove / spent / review',
         },
         id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
         text: { type: 'string', description: 'add：目标一句话' },
@@ -2960,6 +2997,7 @@ async function handleEvent(event) {
         status: { type: 'string', description: 'set：active / done / paused' },
         milestones: { type: 'string', description: 'decompose：阶段与步骤的 JSON 数组字符串' },
         stepId: { type: 'string', description: 'done/undo/split：步骤 id，如 g1-m2-s1（子步骤是 g1-m2-s1-s1）' },
+        units: { type: 'number', description: 'dispatch：今天想派几格（1–16，一格约 30 分钟）' },
         children: {
           type: 'string',
           description: 'split：子步骤的 JSON 数组字符串，每条 {title, product, check, kind, units}；可以无限往下拆',
@@ -3153,6 +3191,19 @@ async function handleEvent(event) {
               ? '能派的都太难（成功率偏低）：先补前置能力，或者把这步再拆细'
               : '没有可派的步骤：目标都做完了、暂停了，或者还没拆',
         };
+      }
+
+      if (action === 'dispatch') {
+        const units = Math.round(Number(args.units))
+        if (!Number.isFinite(units) || units < 1) {
+          return { ok: false, error: '要给个格数（1–16），例如 units=6' }
+        }
+        const fixed = Math.min(16, Math.max(1, units))
+        speechSettings.dispatchUnits = fixed
+        saveSpeechSettings()
+        const removed = await clearAutoSteps()
+        const result = await autoPlanGoals({ forceUnits: fixed })
+        return { ok: true, units: fixed, removed: removed.length, items: result.items, lines: result.lines }
       }
 
       if (action === 'spent') {
@@ -3965,7 +4016,10 @@ async function handleEvent(event) {
           const now = new Date()
           const key = todayKey(now)
           const minuteOfDay = now.getHours() * 60 + now.getMinutes()
-          if (minuteOfDay % 5 === 0) pushChoreState(key)
+          if (minuteOfDay % 5 === 0) {
+            pushChoreState(key)
+            writeState({ dispatchUnits: Number(speechSettings.dispatchUnits) || 0 })
+          }
           if (choreAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
             choreAutoDate = key
             const day = choreDay(key)
@@ -4019,7 +4073,8 @@ async function handleEvent(event) {
       }, 90000)
       log(`label sampler armed (every ${LABEL_INTERVAL_MS / 60000}min)`)
     }
-    log(`guide-tutor ready (dataDir=${dataDir}, autoStart=${config.autoStart !== false})`)
+    writeState({ dispatchUnits: Number(speechSettings.dispatchUnits) || 0 })
+  log(`guide-tutor ready (dataDir=${dataDir}, autoStart=${config.autoStart !== false})`)
     return () => {
       disposed = true
       clearInterval(poll)

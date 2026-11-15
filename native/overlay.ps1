@@ -2234,6 +2234,174 @@ function Rebuild-GoalsPanel {
 # 哪些组步被收起来了（键是 stepId，只在本次运行里记，重启回到全展开）。
 if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
 
+$script:DispatchWindow = $null
+
+function Show-DispatchWindow {
+    if ($null -ne $script:DispatchWindow) {
+        try { $script:DispatchWindow.Close() } catch { }
+        $script:DispatchWindow = $null
+    }
+    $saved = 0
+    try {
+        if ($null -ne $script:LastState -and $null -ne $script:LastState.dispatchUnits) {
+            $saved = [int]$script:LastState.dispatchUnits
+        }
+    }
+    catch { $saved = 0 }
+    $current = $saved
+    if ($current -lt 1) { $current = 6 }
+
+    $win = [System.Windows.Window]::new()
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Width = 420
+    $win.Height = 246
+    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $win.Topmost = $true
+    $win.ShowInTaskbar = $false
+
+    $card = [System.Windows.Controls.Border]::new()
+    $card.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 28, 32, 40))
+    $card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(60, 255, 255, 255))
+    $card.BorderThickness = [System.Windows.Thickness]::new(1)
+    $card.CornerRadius = [System.Windows.CornerRadius]::new(16)
+    $card.Padding = [System.Windows.Thickness]::new(20, 16, 20, 16)
+    $win.Content = $card
+
+    $stack = [System.Windows.Controls.StackPanel]::new()
+    $card.Child = $stack
+
+    $head = [System.Windows.Controls.Grid]::new()
+    $h1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $h2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$head.ColumnDefinitions.Add($h1)
+    [void]$head.ColumnDefinitions.Add($h2)
+
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $title.Text = '今天派多少'
+    $title.FontSize = 15
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $title.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(245, 236, 242, 250))
+    [System.Windows.Controls.Grid]::SetColumn($title, 0)
+    [void]$head.Children.Add($title)
+
+    $close = [System.Windows.Controls.TextBlock]::new()
+    $close.Text = '✕'
+    $close.FontSize = 12
+    $close.Cursor = [System.Windows.Input.Cursors]::Hand
+    $close.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $close.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    $close.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try { if ($null -ne $script:DispatchWindow) { $script:DispatchWindow.Close() } } catch { }
+        })
+    [System.Windows.Controls.Grid]::SetColumn($close, 1)
+    [void]$head.Children.Add($close)
+    [void]$stack.Children.Add($head)
+
+    $hint = [System.Windows.Controls.TextBlock]::new()
+    $hint.Text = '一格约 30 分钟。定下来以后每天按这个数派，不用再手动排。'
+    $hint.FontSize = 10.5
+    $hint.Margin = [System.Windows.Thickness]::new(0, 4, 0, 10)
+    $hint.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    $hint.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 150, 170, 195))
+    [void]$stack.Children.Add($hint)
+
+    $valueRow = [System.Windows.Controls.StackPanel]::new()
+    $valueRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $valueText = [System.Windows.Controls.TextBlock]::new()
+    $valueText.Text = ('{0} 格' -f $current)
+    $valueText.FontSize = 26
+    $valueText.FontWeight = [System.Windows.FontWeights]::Bold
+    $valueText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 90, 160, 255))
+    [void]$valueRow.Children.Add($valueText)
+    $valueSub = [System.Windows.Controls.TextBlock]::new()
+    $valueSub.Text = ('  ≈ {0} 小时' -f ([math]::Round($current * 30 / 60, 1)))
+    $valueSub.FontSize = 11
+    $valueSub.VerticalAlignment = [System.Windows.VerticalAlignment]::Bottom
+    $valueSub.Margin = [System.Windows.Thickness]::new(4, 0, 0, 5)
+    $valueSub.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(170, 150, 170, 195))
+    [void]$valueRow.Children.Add($valueSub)
+    [void]$stack.Children.Add($valueRow)
+
+    $slider = [System.Windows.Controls.Slider]::new()
+    $slider.Minimum = 1
+    $slider.Maximum = 16
+    $slider.Value = $current
+    $slider.TickFrequency = 1
+    $slider.IsSnapToTickEnabled = $true
+    $slider.Margin = [System.Windows.Thickness]::new(0, 8, 0, 14)
+    $script:DispatchSlider = $slider
+    $slider.Add_ValueChanged({
+            param($s, $e)
+            $v = [int]$s.Value
+            $valueText.Text = ('{0} 格' -f $v)
+            $valueSub.Text = ('  ≈ {0} 小时' -f ([math]::Round($v * 30 / 60, 1)))
+        })
+    [void]$stack.Children.Add($slider)
+
+    $btnRow = [System.Windows.Controls.StackPanel]::new()
+    $btnRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $btnRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+
+    $autoBtn = [System.Windows.Controls.Border]::new()
+    $autoBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 50, 62))
+    $autoBtn.CornerRadius = [System.Windows.CornerRadius]::new(8)
+    $autoBtn.Padding = [System.Windows.Thickness]::new(12, 7, 12, 7)
+    $autoBtn.Margin = [System.Windows.Thickness]::new(0, 0, 10, 0)
+    $autoBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $autoText = [System.Windows.Controls.TextBlock]::new()
+    $autoText.Text = '按空档自动'
+    $autoText.FontSize = 11
+    $autoText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(220, 226, 234, 245))
+    $autoBtn.Child = $autoText
+    $autoBtn.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            Send-OverlayEvent @{ type = 'dispatch_goals'; units = 0 }
+            try { if ($null -ne $script:DispatchWindow) { $script:DispatchWindow.Close() } } catch { }
+        })
+    [void]$btnRow.Children.Add($autoBtn)
+
+    $applyBtn = [System.Windows.Controls.Border]::new()
+    $applyBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 112, 230))
+    $applyBtn.CornerRadius = [System.Windows.CornerRadius]::new(8)
+    $applyBtn.Padding = [System.Windows.Thickness]::new(16, 7, 16, 7)
+    $applyBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $applyText = [System.Windows.Controls.TextBlock]::new()
+    $applyText.Text = '重新排'
+    $applyText.FontSize = 11.5
+    $applyText.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $applyText.Foreground = [System.Windows.Media.Brushes]::White
+    $applyBtn.Child = $applyText
+    $applyBtn.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            $v = 0
+            try { $v = [int]$script:DispatchSlider.Value } catch { $v = 0 }
+            if ($v -lt 1) { $v = 6 }
+            Send-OverlayEvent @{ type = 'dispatch_goals'; units = $v }
+            try { if ($null -ne $script:DispatchWindow) { $script:DispatchWindow.Close() } } catch { }
+        })
+    [void]$btnRow.Children.Add($applyBtn)
+    [void]$stack.Children.Add($btnRow)
+
+    $win.Add_Closed({ $script:DispatchWindow = $null })
+    $win.Add_MouseLeftButtonDown({
+            param($s, $e)
+            try { $win.DragMove() } catch { }
+        })
+
+    $script:DispatchWindow = $win
+    $win.Show()
+    [void]$win.Activate()
+    Write-Log 'dispatch window opened'
+}
+
 function Show-GoalsWindow {
     $script:EditingGoal = $null
     $script:GoalsData = @(Read-GoalsData)
@@ -2270,9 +2438,12 @@ function Show-GoalsWindow {
     $hc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
     $hc3 = [System.Windows.Controls.ColumnDefinition]::new()
     $hc3.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $hc4 = [System.Windows.Controls.ColumnDefinition]::new()
+    $hc4.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
     [void]$head.ColumnDefinitions.Add($hc1)
     [void]$head.ColumnDefinitions.Add($hc2)
     [void]$head.ColumnDefinitions.Add($hc3)
+    [void]$head.ColumnDefinitions.Add($hc4)
     $title = [System.Windows.Controls.TextBlock]::new()
     $title.Text = '我的目标'
     $title.FontSize = 17
@@ -2288,6 +2459,23 @@ function Show-GoalsWindow {
     [System.Windows.Controls.Grid]::SetColumn($sub, 1)
     [void]$head.Children.Add($sub)
 
+    # 派发：调今天往清单里塞多少任务。
+    $dispLink = [System.Windows.Controls.TextBlock]::new()
+    $dispLink.Text = '派发'
+    $dispLink.FontSize = 11
+    $dispLink.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $dispLink.Margin = [System.Windows.Thickness]::new(12, 2, 0, 0)
+    $dispLink.Cursor = [System.Windows.Input.Cursors]::Hand
+    $dispLink.ToolTip = '调整今天派多少任务：多派点填空，少派点留余地'
+    $dispLink.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(210, 90, 160, 255))
+    $dispLink.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try { Show-DispatchWindow } catch { Write-Log ('dispatch window failed: ' + $_.Exception.Message) }
+        })
+    [System.Windows.Controls.Grid]::SetColumn($dispLink, 2)
+    [void]$head.Children.Add($dispLink)
+
     # 右上角关闭按钮：之前这个窗口只有底部那个「关闭」，没有右上角 ×。
     $closeX = [System.Windows.Controls.TextBlock]::new()
     $closeX.Text = '✕'
@@ -2302,7 +2490,7 @@ function Show-GoalsWindow {
         $e.Handled = $true
         try { $script:GoalsWindow.Close() } catch { }
     })
-    [System.Windows.Controls.Grid]::SetColumn($closeX, 2)
+    [System.Windows.Controls.Grid]::SetColumn($closeX, 3)
     [void]$head.Children.Add($closeX)
     [System.Windows.Controls.Grid]::SetRow($head, 0)
     [void]$grid.Children.Add($head)
@@ -4235,6 +4423,20 @@ function New-CardWindow {
     $headBtns = [System.Windows.Controls.StackPanel]::new()
     $headBtns.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $headBtns.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+
+    $dispBtn = [System.Windows.Controls.TextBlock]::new()
+    $dispBtn.Text = '派发'
+    $dispBtn.FontSize = 10.5
+    $dispBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
+    $dispBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $dispBtn.ToolTip = '调整今天派多少任务：多派点填空，少派点留余地'
+    $dispBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
+    $dispBtn.Add_PreviewMouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+        try { Show-DispatchWindow } catch { Write-Log ('dispatch window failed: ' + $_.Exception.Message) }
+    })
+    [void]$headBtns.Children.Add($dispBtn)
 
     $tplBtn = [System.Windows.Controls.TextBlock]::new()
     $tplBtn.Text = '模板'
