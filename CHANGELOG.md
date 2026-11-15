@@ -3211,3 +3211,36 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 
 `git revert <本次提交>`，或把 `lib/decompose.js` 里那段注释换回 `const VAGUE_WORDS = [...]` 并在 `validateGoal` 的 `else` 分支恢复过滤逻辑。
+## 2026-11-15 14:32 补齐拆解链路的两个缺件，并把 g1/g2 真正拆开
+
+**改了什么**
+
+- `index.js` 的 `guide_goal` 新增两个 action：
+  - `scaffold`：返回一份待填的 milestones 模板 + 六条拆解硬规则 + 提示（填完用 `decompose` 校验再 `apply`）。
+  - `review`：今天的复盘——列出挂了 `stepId` 的清单条目、每条在记录卡里的实际分钟、以及各目标的 `progressLine`，返回结构化 `items/done/total/minutes/goals/lines`。
+- `index.js` 的 `TUTOR_PROMPT`：【目标拆解】段重写，写入六条硬规则（一步=一格=25–50 分钟+可拿出的产物；product 写名词、check 写怎么验；阶段 3–5 个、每阶段 2–4 步；超 3 格必拆；写不出 check 改 `kind:read`；拆不动=缺知识先插查资料步），并新增【目标复盘】一段指向 `guide_goal review`。
+- `guide_goal` 的 description 与 `action` 枚举补上 `scaffold` / `review`。
+- 数据侧（`~/.dsh/guide-tutor/goals.json`）：
+  - g1 写入验收句「能独立写一个带数据库的 CRUD 接口：curl 能增删改查，实验五的报告能交上去」+ 4 阶段 8 步（环境跑起来 / 看懂依赖注入 / 接上数据库 / 写出 CRUD 接口）。
+  - g2 写入验收句「能把课本第三章的脚本改一个功能，并跑出预期的输出」+ 3 阶段 6 步（基础语法过一遍 / 看懂一个完整脚本 / 动手改一个功能）。
+- 数据侧（`~/.dsh/guide-tutor/plan.json`）：今天新增两条带 `stepId` 的清单——14:30–15:20「装 JDK 17 并确认版本」`g1-m1-s1`、15:30–16:20「建 Spring Boot 空工程并用 mvn 起 hello」`g1-m1-s2`。
+- `tmp/e2e-real.mjs`：三处断言随真实数据更新——派发改成 `limit:50/maxUnits:999` 后按 goalId 过滤（真实 g1/g2 现在也有可派步骤，会占满 limit）；最后一条从「原有目标仍是未拆状态」改成「原有目标的阶段未被测试改动」。
+
+**为什么**
+
+用户问「我要怎么使用这个功能、现在能运行吗」，我列出的缺口里，拆解没有模板入口、复盘完全没有、两个真实目标还是空的。这次补上「怎么拆」的指导与「拆成什么样」的实例，让链路第一次有真实数据可以跑。
+
+**怎么验证**
+
+- `node --check index.js` exit 0。
+- `node tmp/decompose-real.mjs` → g1 4 阶段/8 步、g2 3 阶段/6 步，`validateGoal` 零问题。
+- `node tmp/seed-plan.mjs` → 今天 2 条，均带 `stepId`。
+- `node tmp/check-data.mjs` → 目标结构、清单 stepId、记录卡归因（当前 0 段，因清单刚排、时段未到）、skill 状态均符合预期。
+- `node tmp/test-units.mjs` 38 passed、`node tmp/test-decompose.mjs` 28 passed、`node tmp/e2e-real.mjs` 9 passed。
+- 数据改前备份：`tmp/goals.before-decompose.json`。
+
+**怎么恢复**
+
+- 目标拆解：把 `tmp/goals.before-decompose.json` 覆盖回 `~/.dsh/guide-tutor/goals.json`。
+- 清单两条：`guide_plan remove` 对应 id，或直接删 `plan.json` 里那两条。
+- 代码：`git revert <本次提交>`。

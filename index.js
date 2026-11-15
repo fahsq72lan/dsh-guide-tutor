@@ -65,7 +65,7 @@ const DEFAULT_TOPBAR = { x: null, y: null, scale: 1 }
 const DEFAULT_SUBTITLE = { active: false, text: '', reveal: 0, seq: 0 }
 
 const TUTOR_PROMPT = `【屏幕教学】本环境装有"教学助手"：桌面悬浮球、全屏标注层和半透明步骤面板，由 guide_* 工具控制。\n- 当用户说"教我 / 带我操作 / 帮我做某件事"，或你收到【读屏请求】【语音】【完成确认】消息时，按此流程：guide_screen 截屏 → read_image 看图 → guide_teach 标注并在面板写一步提示。\n- 标注坐标与最近一次截图使用同一像素坐标（原点为虚拟桌面左上角，可直接用截图里的坐标）。\n- 一次只给一步；用户完成后重新截屏确认，再给下一步。多步骤任务把步骤列表放进 panel.steps，当前步放进 panel.stepIndex。\n- 面板文字要短（不超过 30 字），像教练在旁边轻声提示；解释放在聊天回复里。\n- 【收尾】任务达成、用户说"好了/完成了"，或你截屏看到目标已实现时，先 guide_screen 核验，再调用 guide_finish 结束：它会清空标注并把面板折叠回悬浮球。不要一直把标注和面板挂在屏幕上。\n- 【语音】用户可能用语音说话（消息以【语音】开头）：回应要口语化、简短，因为对方可能没在看屏幕。\n- 【面板对话】用户会从面板底部的输入框打字（消息以【面板对话】开头），这是"先沟通、再动手"的通道：新目标先确认理解、把计划写进 panel.steps 并等待用户点开始；回答问题时把短答案写进 panel.text；说"开始/下一步"时才截屏标注。\n- 【目标】确定教学任务后，用 guide_teach 的 goal 字段记录一句话目标（例如"在 Excel 里插入数据透视表"），这样面板和状态页都能显示当前任务。\n- 教学脚本可以存进 guide_kb（Markdown），下次直接读取复用。\n- 不确定屏幕内容时先截屏或直接问用户，不要臆测坐标。\n- 【下一步】用户点面板上的「下一步」＝这步做完了：先 guide_screen 截屏核验，再用 guide_teach 给出下一步标注，并把 panel.stepIndex 推进一格；已经是最后一步或目标达成，就用 guide_finish 收尾。\n- 【常听】面板和托盘都有「常听」开关：打开后每说完一句会自动再听，适合连续口述；用户说"关掉常听"时提醒他在面板或托盘取消勾选。\n- 【口播】每次回复用户前先调用 guide_say。这段是"说"出来给人听的，要像跟熟人聊天，但**总时长控制在 60 秒内**：当前语速约每秒 2.8 字，也就是 150–170 字、8–12 句，每句 ≤30 字。信息要密度高——正文的结论、原因、数字、下一步挑最要紧的塞进去，别用废话铺垫，也别只丢一句概括。可以有"嗯""你看""说实话"这类口头语，可以带情绪和判断，可以反问一句把话头递回去；只略过代码块、表格细节、文件路径。插件会逐句朗读并同步字幕，详细内容留在聊天里。
-- 【字幕】字幕自动出现在最近一次标注的旁边；没有标注时出现在屏幕底部中间。\n- 【都市指令】用户设了目标后（面板右上角「目标」窗口，写 goals.json），心跳会到点叫醒你发令：这时按消息里的三件事做——guide_directive action=issue 发令、guide_teach 贴面板、guide_say 念一句。收到【都市指令·催办】就问一句做了没，然后 action=close 记结果。用户主动喊"来条指令"也走同一套。别在没人叫的时候自己定时发。\n- 【专注环】用户说"拉我一下/提醒我专注/别走神"时，用 guide_focus start（默认 25 分钟一轮、每 8 分钟喊一次、90 分钟后自动结束）。它是纯本地闹钟：到点用 TTS 说话，不叫模型、不花 token；人离开电脑（键鼠空闲 5 分钟）或正在上课时自己跳过。用户说"停"就 stop。\n- 【目标拆解】用户说"把这个目标拆一下""下一步做什么"时用 guide_goal：list 看目标与进度；add 建目标（必须追验收句，不能写"掌握/了解"）；decompose 把阶段步骤写回（先不带 apply 只看校验，过了再 apply=true）；next 拿今天该派的步骤；随后用 guide_plan add 时带上 stepId，勾完成会自动回写目标进度；skill 看各类历史成功率与能力牌。一步 = 一格 = 25–50 分钟 + 一个能拿出来的产物。\n- 【桌面清单】目标可以排成当天的清单，用 guide_plan：add 加一条（from/to 用 HH:mm、place、title），show/hide 控制桌面卡片，done/undo 打勾，remove 划掉。早上 7:00–9:30 今天还没清单时心跳会叫你排一次；到点前 10 分钟提醒、过点 15 分钟追问一次，语气读 edict.json 的 tone。卡片是"伪融入桌面"的半透明清单（无边框+强半透明），不是真嵌进壁纸层，别承诺贴进桌面壁纸。\n- 【Word 知识库】guide_kb 支持 .md 与 .docx，名字可以带子目录（如「Linux/实验五.md」）：要 Word 版步骤就 save 一个 .docx 名字并给 content（Markdown 自动排版成标题/列表/表格）；导入已有 Word 用 source 指向绝对路径；read 一个 .docx 会返回抽取出的文本。\n- 【视频】用户给 B 站链接想“看懂/记住”时：先 video_learn 取字幕（分P用链接里的 ?p=N；没有字幕就说明要登录 Cookie，可用 video_cookie 保存 SESSDATA），长视频用 video_transcript 翻页读完，再用 video_note 写回摘要和要点；之后用 video_recall 回忆、video_show 看详情、video_list 看库存、video_forget 删记录。用户只知道想找什么、没有链接时，先用 video_search 按关键词搜，把结果列给他挑，再 video_learn。视频存在独立视频库，不和教学知识库混放。\n- 【改动日志】用户定了硬规矩：任何对文件的实际修改（代码、配置、文档、清理删除），都要在同一个回合里写进该项目的 CHANGELOG.md（没有就新建；不成项目时写 ~/.dsh/changes/YYYY-MM.md）。每条四段：改了什么（文件+行数或字节）、为什么、怎么验证（命令+结果）、删掉的东西怎么恢复。删文件、改依赖版本、改数据结构必须单独一行。规矩的来历与全文见 ~/.dsh/AGENTS.md。只写在聊天里不算数。`
+- 【字幕】字幕自动出现在最近一次标注的旁边；没有标注时出现在屏幕底部中间。\n- 【都市指令】用户设了目标后（面板右上角「目标」窗口，写 goals.json），心跳会到点叫醒你发令：这时按消息里的三件事做——guide_directive action=issue 发令、guide_teach 贴面板、guide_say 念一句。收到【都市指令·催办】就问一句做了没，然后 action=close 记结果。用户主动喊"来条指令"也走同一套。别在没人叫的时候自己定时发。\n- 【专注环】用户说"拉我一下/提醒我专注/别走神"时，用 guide_focus start（默认 25 分钟一轮、每 8 分钟喊一次、90 分钟后自动结束）。它是纯本地闹钟：到点用 TTS 说话，不叫模型、不花 token；人离开电脑（键鼠空闲 5 分钟）或正在上课时自己跳过。用户说"停"就 stop。\n- 【目标拆解】用户说"把这个目标拆一下""下一步做什么"时用 guide_goal：list 看目标与进度；add 建目标（acceptance 验收句要问用户，写他自己认的就行，别替他判"掌握/了解"够不够格）；scaffold 拿一份待填模板；decompose 把阶段步骤写回（先不带 apply 只看校验，过了再 apply=true）；next 拿今天该派的步骤；随后用 guide_plan add 时带上 stepId，勾完成会自动回写目标进度；review 出今天的复盘行；spent 查某步在记录卡里花了多久；skill 看各类历史成功率与能力牌。\n  拆的硬规则：①一步 = 一格 = 25–50 分钟 + 一个能拿出来的产物，product 写名词（文件/输出/一段话），check 写"怎么验"一句话；②终止条件三条同时满足——25–50 分钟内能做完、自己能在片子上判对错、这个产物是下一步的输入；③阶段 3–5 个，一个阶段里 2–4 步，超过 8 步说明这一步拆得不够；④一步超过 3 格必须再拆；⑤写不出 check 就别硬写，改插一条 kind=read 的"搞懂 X"；⑥拆不动等于缺知识，先插一条查资料/看文档的 step，别硬猜。\n- 【目标复盘】用户问"今天推进了什么""这条做得怎么样"时用 guide_goal review：它会把今天挂了 stepId 的清单条目、记录卡里的实际分钟数、各目标进度拼成几行给用户看；要写进日志再走 guide_journal。\n- 【桌面清单】目标可以排成当天的清单，用 guide_plan：add 加一条（from/to 用 HH:mm、place、title），show/hide 控制桌面卡片，done/undo 打勾，remove 划掉。早上 7:00–9:30 今天还没清单时心跳会叫你排一次；到点前 10 分钟提醒、过点 15 分钟追问一次，语气读 edict.json 的 tone。卡片是"伪融入桌面"的半透明清单（无边框+强半透明），不是真嵌进壁纸层，别承诺贴进桌面壁纸。\n- 【Word 知识库】guide_kb 支持 .md 与 .docx，名字可以带子目录（如「Linux/实验五.md」）：要 Word 版步骤就 save 一个 .docx 名字并给 content（Markdown 自动排版成标题/列表/表格）；导入已有 Word 用 source 指向绝对路径；read 一个 .docx 会返回抽取出的文本。\n- 【视频】用户给 B 站链接想“看懂/记住”时：先 video_learn 取字幕（分P用链接里的 ?p=N；没有字幕就说明要登录 Cookie，可用 video_cookie 保存 SESSDATA），长视频用 video_transcript 翻页读完，再用 video_note 写回摘要和要点；之后用 video_recall 回忆、video_show 看详情、video_list 看库存、video_forget 删记录。用户只知道想找什么、没有链接时，先用 video_search 按关键词搜，把结果列给他挑，再 video_learn。视频存在独立视频库，不和教学知识库混放。\n- 【改动日志】用户定了硬规矩：任何对文件的实际修改（代码、配置、文档、清理删除），都要在同一个回合里写进该项目的 CHANGELOG.md（没有就新建；不成项目时写 ~/.dsh/changes/YYYY-MM.md）。每条四段：改了什么（文件+行数或字节）、为什么、怎么验证（命令+结果）、删掉的东西怎么恢复。删文件、改依赖版本、改数据结构必须单独一行。规矩的来历与全文见 ~/.dsh/AGENTS.md。只写在聊天里不算数。`
 
 export const inject = ['tools', 'systemPrompt', 'agents']
 
@@ -2533,13 +2533,13 @@ async function handleEvent(event) {
   const guideGoalTool = {
     name: 'guide_goal',
     description:
-      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；decompose=把拆好的阶段步骤整块写回（milestones 数组，先不带 apply 只看校验）；validate=只看校验问题；next=今天该派哪几步（带成功率，太难的单独列出；可直接拿去 guide_plan add，带上 stepId）；spent=按 stepId 汇总记录卡里的实际用时；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）；remove=删目标。',
+      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；scaffold=拿一份待填的拆解模板与硬规则；decompose=把拆好的阶段步骤整块写回（milestones 数组，先不带 apply 只看校验）；validate=只看校验问题；next=今天该派哪几步（带成功率，太难的单独列出；可直接拿去 guide_plan add，带上 stepId）；spent=按 stepId 汇总记录卡里的实际用时；review=今天的复盘（清单条目 + 实际分钟 + 各目标进度）；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）；remove=删目标。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          description: 'list / show / add / set / decompose / validate / next / done / undo / progress / skill / cap / remove / spent',
+          description: 'list / show / add / set / scaffold / decompose / validate / next / done / undo / progress / skill / cap / remove / spent / review',
         },
         id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
         text: { type: 'string', description: 'add：目标一句话' },
@@ -2717,6 +2717,90 @@ async function handleEvent(event) {
           segments: rows.length,
           detail: rows,
           note: '只统计清单条目挂了 stepId 的时段，空窗和空闲不算',
+        };
+      }
+
+      if (action === 'scaffold') {
+        const goal = goalId ? goals.get(goalId) : null;
+        if (goalId && !goal) return { ok: false, error: `没有 ${goalId}` };
+        return {
+          ok: true,
+          goalId: goal?.id || '',
+          text: goal?.text || '',
+          acceptance: goal?.acceptance || '',
+          template: {
+            milestones: [
+              {
+                title: '阶段：一个能验收的台阶（3–5 个）',
+                steps: [
+                  {
+                    title: '一步一件事',
+                    product: '做完手上多出什么：文件/命令输出/一段话',
+                    check: '怎么验：一句话，自己能判对错',
+                    kind: 'demo',
+                    units: 1,
+                    dependsOn: [],
+                    caps: [{ ref: '某项前置能力', state: 'unknown' }],
+                  },
+                ],
+              },
+            ],
+          },
+          rules: [
+            '一步 = 一格 = 25–50 分钟 + 一个能拿出来的产物',
+            'product 写名词，check 写怎么验；写不出 check 就改成 kind=read 的「搞懂 X」',
+            '阶段 3–5 个，每阶段 2–4 步，超过 8 步说明没拆透',
+            '一步超过 3 格必须再拆',
+            '拆不动 = 缺知识，先插一条查资料/看文档的 step',
+            '验收句归用户，他说认就认',
+          ],
+          hint: '填完用 action=decompose + milestones（先不带 apply 看校验，通过再 apply=true）',
+        };
+      }
+
+      if (action === 'review') {
+        // 今天的复盘：清单里挂了 stepId 的条目 + 记录卡里这些步的实际分钟 + 各目标进度。
+        const today = plan.forToday(new Date());
+        const items = (today.items || []).filter((item) => item && item.stepId);
+        const coachState = path.join(path.dirname(dataDir), 'guide-coach', 'state.json');
+        let segments = [];
+        try {
+          const raw = JSON.parse(fs.readFileSync(coachState, 'utf8'));
+          segments = Array.isArray(raw?.record?.segments) ? raw.record.segments : [];
+        } catch (error) {
+          if (error?.code !== 'ENOENT') log(`coach state read failed: ${error?.message ?? error}`);
+        }
+        const byStep = new Map();
+        for (const seg of segments) {
+          if (!seg || !seg.stepId) continue;
+          byStep.set(seg.stepId, (byStep.get(seg.stepId) || 0) + (Number(seg.minutes) || 0));
+        }
+        const rows = items.map((item) => ({
+          stepId: item.stepId,
+          title: item.title,
+          from: item.from,
+          to: item.to,
+          done: item.done === true,
+          minutes: byStep.get(item.stepId) || 0,
+        }));
+        const lines = [];
+        if (!rows.length) lines.push('今天清单里没有挂 stepId 的条目');
+        for (const row of rows) {
+          const mark = row.done ? '✅' : '⬜';
+          const spent = row.minutes ? `，记录里 ${row.minutes} 分钟` : '，记录里还没对上';
+          lines.push(`${mark} ${row.from}-${row.to} ${row.title}${spent}`);
+        }
+        const goalLines = goals.active().map((g) => progressLine(g));
+        lines.push(...goalLines);
+        return {
+          ok: true,
+          date: todayKey(new Date()),
+          items: rows,
+          done: rows.filter((row) => row.done).length,
+          total: rows.length,
+          minutes: rows.reduce((n, row) => n + row.minutes, 0),
+          goals: goalLines,
+          lines,
         };
       }
 
