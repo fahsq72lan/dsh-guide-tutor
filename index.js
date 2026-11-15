@@ -29,6 +29,7 @@ import {
   validateGoal,
   flattenGoals,
 } from './lib/decompose.js'
+import { estimateWin } from './lib/units.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NATIVE_DIR = path.join(HERE, 'native')
@@ -2532,13 +2533,13 @@ async function handleEvent(event) {
   const guideGoalTool = {
     name: 'guide_goal',
     description:
-      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；decompose=把拆好的阶段步骤整块写回（milestones 数组）；validate=只看校验问题；next=今天该派哪几步（可直接拿去 guide_plan add，带上 stepId）；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）。',
+      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；decompose=把拆好的阶段步骤整块写回（milestones 数组，先不带 apply 只看校验）；validate=只看校验问题；next=今天该派哪几步（带成功率，太难的单独列出；可直接拿去 guide_plan add，带上 stepId）；spent=按 stepId 汇总记录卡里的实际用时；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）；remove=删目标。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          description: 'list / show / add / set / decompose / validate / next / done / undo / progress / skill / cap / remove',
+          description: 'list / show / add / set / decompose / validate / next / done / undo / progress / skill / cap / remove / spent',
         },
         id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
         text: { type: 'string', description: 'add：目标一句话' },
@@ -2655,26 +2656,67 @@ async function handleEvent(event) {
       if (action === 'next') {
         const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : 3;
         const maxUnits = Number.isFinite(Number(args.maxUnits)) ? Number(args.maxUnits) : 3;
+        const profile = skill.read();
         const picked = pickNextSteps(goals.active(), { limit, maxUnits });
         const today = plan.forToday(new Date());
         const taken = new Set((today.items || []).map((item) => item.stepId).filter(Boolean));
         const items = picked
           .filter(({ step }) => !taken.has(step.stepId))
-          .map(({ goal, milestone, step }) => ({
-            stepId: step.stepId,
-            goalId: goal.id,
-            milestoneId: milestone.id,
-            title: step.title,
-            units: step.units,
-            check: step.check,
-            addArgs: toPlanItem({ goal, milestone, step }),
-          }));
+          .map(({ goal, milestone, step }) => {
+            // 派发前算一次成功率：太低就先别派，说明缺前置能力或该继续拆。
+            const win = estimateWin(step, profile);
+            return {
+              stepId: step.stepId,
+              goalId: goal.id,
+              milestoneId: milestone.id,
+              title: step.title,
+              units: step.units,
+              check: step.check,
+              percent: Math.round(win.p * 100),
+              verdict: win.verdict,
+              weak: win.weak || '',
+              advice: win.advice || '',
+              addArgs: toPlanItem({ goal, milestone, step }),
+            };
+          });
+        const ready = items.filter((item) => item.verdict !== 'too-hard');
+        const tooHard = items.filter((item) => item.verdict === 'too-hard');
         return {
           ok: true,
-          count: items.length,
-          units: items.reduce((n, item) => n + item.units, 0),
-          items,
-          hint: items.length ? '挑一条，用 guide_plan add 带上 stepId 和 from/to' : '没有可派的步骤：目标都做完了、暂停了，或者还没拆',
+          count: ready.length,
+          units: ready.reduce((n, item) => n + item.units, 0),
+          items: ready,
+          tooHard,
+          hint: ready.length
+            ? '挑一条，用 guide_plan add 带上 stepId 和 from/to'
+            : tooHard.length
+              ? '能派的都太难（成功率偏低）：先补前置能力，或者把这步再拆细'
+              : '没有可派的步骤：目标都做完了、暂停了，或者还没拆',
+        };
+      }
+
+      if (action === 'spent') {
+        // 按 stepId 汇总记录卡里的实际用时：读 coach 的 state.json（记录段带 stepId）。
+        const coachState = path.join(path.dirname(dataDir), 'guide-coach', 'state.json');
+        let segments = [];
+        try {
+          const raw = JSON.parse(fs.readFileSync(coachState, 'utf8'));
+          segments = Array.isArray(raw?.record?.segments) ? raw.record.segments : [];
+        } catch (error) {
+          if (error?.code !== 'ENOENT') log(`coach state read failed: ${error?.message ?? error}`);
+        }
+        const wanted = String(args.stepId || '').trim();
+        const rows = segments
+          .filter((seg) => seg && seg.stepId && (!wanted || seg.stepId === wanted))
+          .map((seg) => ({ stepId: seg.stepId, from: seg.from, to: seg.to, minutes: Number(seg.minutes) || 0, title: seg.title || '' }));
+        const total = rows.reduce((n, row) => n + row.minutes, 0);
+        return {
+          ok: true,
+          stepId: wanted,
+          totalMinutes: total,
+          segments: rows.length,
+          detail: rows,
+          note: '只统计清单条目挂了 stepId 的时段，空窗和空闲不算',
         };
       }
 

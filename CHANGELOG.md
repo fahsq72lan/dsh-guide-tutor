@@ -3169,3 +3169,25 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 - 删除文件：`C:\Users\易千纸\.dsh\guide-tutor\user-skill.json`（本次测试生成；恢复方式：从 `tmp/user-skill.test-artifact.json` 复制回，或不管它——删了只是回到「没有能力档案」的初始态）。
 - 数据结构变更：`goals.json` 从 `[{id,text,status}]` 升级为 `{updatedAt, goals:[{id,text,acceptance,status,createdAt,milestones[]}]}`。旧文件仍可读（goals.js 兼容两种形状），但一写盘就升级。
+## 2026-11-15 14:35 补两处缺口：派发带成功率、steps 的 caps 能被识别
+
+**改了什么**
+
+- `index.js` 的 `guide_goal next`：派发前对每一步调 `estimateWin`，返回里带 `percent` / `verdict` / `weak` / `advice`；`verdict === 'too-hard'` 的不进 `items`，单列到 `tooHard`，`hint` 会说明「能派的都太难，先补前置能力或继续拆」。
+- `index.js` 新增 `guide_goal action=spent`：读 `~/.dsh/guide-coach/state.json` 的 `record.segments`，按 `stepId` 汇总实际分钟数（空窗与空闲不算）。
+- `lib/capabilities.js` 的 `normalizeCaps()` 增加对 `step.caps` 的识别（`lib/decompose.js` 的步骤用的是 `caps`，此前只认 `capabilities` / `requires`，导致挂了能力牌也不生效）。
+- `lib/units.js` 的 `estimateWin()`：`too-hard` 且短板是 `p_cap` 时，把 `capGap` 占位符「X」替换成具体缺的那张牌名（如 `java-basic`）。
+
+**为什么**
+
+第一次跑 `tmp/check-next.mjs` 发现步骤挂了 `caps:[{ref:'java-basic',state:'lack'}]` 却算出 62%（应该 0%）——`normalizeCaps` 不认 `caps` 字段，能力牌等于没挂。另外 `next` 只按格数派，不看成功率，等于第 8 步「定派发」还是空的。
+
+**怎么验证**
+
+- `node tmp/check-next.mjs` → `g1-m1-s1 0% too-hard p_cap | 缺前置能力：先补「java-basic」…`，`g1-m1-s2 62% good`。
+- `node tmp/test-units.mjs` 38 passed；`node tmp/test-decompose.mjs` 28 passed；`node tmp/e2e-real.mjs` 9 passed。
+- `node --check lib/units.js` exit 0。
+
+**怎么恢复**
+
+`git revert <本次提交>`；纯逻辑改动，无数据迁移。
