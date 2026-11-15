@@ -2381,17 +2381,20 @@ F12：知识库文件多了以后「找得到」比「存得下」更重要；�
 
 ### 改了什么
 - index.js:2439：ar API = location.pathname.replace(/\/+$/, ''); 改为 ar API = location.pathname.replace(/[/]+$/, '');（1 行）。
-- 根因：DASHBOARD_HTML 是模板字符串，源码里的 \/ 会被 JS 转义成 /，浏览器收到的内联脚本变成 eplace(//+$/, '')——// 是注释开头，整行剩余部分被吞，Chrome 报 Uncaught SyntaxError: missing ) after argument list（第 70 行 57 列），整个 <script> 不执行。
+- 根因：DASHBOARD_HTML 是模板字符串，源码里的 \/ 会被 JS 转义成 /，浏览器收到的内联脚本变成 
+eplace(//+$/, '')——// 是注释开头，整行剩余部分被吞，Chrome 报 Uncaught SyntaxError: missing ) after argument list（第 70 行 57 列），整个 <script> 不执行。
 
 ### 为什么
 用户重启 DSH 后打开 http://127.0.0.1:41999/ 一直显示「连接中…」。用 headless Edge 加载页面并注入 window.onerror 复现出上述语法错误；DOM dump 里 #ov 仍是「—」、/status 的 clients=0，确认页面脚本从未执行。这是状态页一直存在的旧 bug（SSE、按钮、滑杆因此全都没工作过），与本次 PWA 改动无关。
 
 ### 怎么验证
 - 复现（修复前）：headless Edge + 注入 onerror，得到 ERR 70:57 Uncaught SyntaxError: missing ) after argument list；curl /status 的 clients 为 0。
-- 修复后需重启 DSH（宿主代码无热重载）；重启后 curl http://127.0.0.1:41999/ 应含 eplace(/[/]+$/, '')，浏览器页面应显示「实时连接」。
+- 修复后需重启 DSH（宿主代码无热重载）；重启后 curl http://127.0.0.1:41999/ 应含 
+eplace(/[/]+$/, '')，浏览器页面应显示「实时连接」。
 
 ### 怎么恢复
-- 把 index.js:2439 改回 eplace(/\/+$/, '') 即回到故障状态（不建议）；回退整个 PWA 改动见上一条。
+- 把 index.js:2439 改回 
+eplace(/\/+$/, '') 即回到故障状态（不建议）；回退整个 PWA 改动见上一条。
 
 ## 2026-11-12 16:45 修排程唤醒失败：DSH 没开对话时 5 分钟后重试
 
@@ -2940,3 +2943,22 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 - 代码：`git checkout -- native/overlay.ps1 index.js`（本条目尚未提交时），或 `git revert <本条目 commit>`。
 - 表格：用备份 `tmp\打磨计划-2026-11.before-B37.xlsx` 覆盖，或删掉第 27 行 B37。
+
+
+## 2026-11-15 11:15 新增知识文件：自律理论两期视频摘要
+
+**改了什么**
+- 新建 `knowledge\自律理论-视频摘要.md`（约 190 行，UTF-8 无 BOM）。
+- 新建目录 `knowledge\`（此前不存在）。
+- 内容：B 站「自律理论」第 24 期（`BV1Cd4y1s7ze`，17:45，434 条字幕）与第 43 期（`BV1Nx42127Xe`，40:15，839 条字幕）的归纳——样板时间表、三条规则、双重重复、五组分类、结构树、两种用法、能借/不能照搬、落到本插件的映射与判定伪代码、原话摘录（带时间戳）。
+- 未改动任何代码，本文件目前不被程序读取。
+
+**为什么**
+用户 m01844：「把这些知识整理成摘要，在插件内部专门建一个文件用于存储这些信息」。两期视频分别对应「一天的计划表」和「周期计划结构」，是后续做时间表模板、每日常项（石流）、以及 AI 拆解/排序的地基，放仓库里比留在对话里可靠。
+
+**怎么验证**
+- Test-Path knowledge → True；文件已写入。
+- 术语「石流」为字幕 ASR 音译，文件内已标注存疑并给出特征（每天重复、按顺序），不当作原词引用。
+
+**怎么恢复**
+- 删掉 `knowledge\自律理论-视频摘要.md` 与空目录 `knowledge\` 即可；不影响任何代码路径。
