@@ -1281,16 +1281,129 @@ function Show-GoalsWindowLegacy {
 }
 
 # --- goals v2 -------------------------------------------------------------
-# 目标看板：目标可拆步骤、打勾算进度，改动即落盘 goals.json。
-# 插件只读 text/status 发「都市指令」，steps 是给人看的，不影响发令。
-$script:GoalsData = @()
-$script:GoalsCards = @()
-$script:GoalsStack = $null
-$script:GoalsScroll = $null
-$script:GoalsStepBoxes = @()
-$script:GoalsNewBox = $null
-$script:EditingGoal = $null
-$script:GoalEditBox = $null
+# 目标看板：目标可拆阶段与步骤、打勾算进度，改动即落盘 goals.json。
+# 2026-11-15：支持 milestones[].steps 两层结构；保存时写回原始对象，
+# 不再把目标重建成只有 6 个字段的新对象（旧写法会吃掉 milestones/acceptance/caps）。
+
+function Get-StepTitle($s) {
+    if ($null -eq $s) { return '' }
+    if ($s -is [string]) { return [string]$s }
+    if ($null -ne $s.title) { return [string]$s.title }
+    if ($null -ne $s.text) { return [string]$s.text }
+    return ''
+}
+
+function Get-StepCheck($s) {
+    if ($null -eq $s -or $s -is [string]) { return '' }
+    if ($null -ne $s.check) { return [string]$s.check }
+    return ''
+}
+
+function Get-StepDone($s) {
+    if ($null -eq $s -or $s -is [string]) { return $false }
+    if ($null -ne $s.status) { return ([string]$s.status -eq 'done') }
+    if ($null -ne $s.done) { return [bool]$s.done }
+    return $false
+}
+
+# 把一个目标摊成「阶段行 + 步骤行」，界面按这个顺序画。
+function Get-GoalRows($Goal) {
+    $rows = @()
+    $ms = @()
+    if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
+    if ($ms.Count -gt 0) {
+        $mi = -1
+        foreach ($m in $ms) {
+            $mi++
+            if ($null -eq $m) { continue }
+            $mTitle = ''
+            if ($null -ne $m.title) { $mTitle = [string]$m.title }
+            elseif ($null -ne $m.text) { $mTitle = [string]$m.text }
+            $steps = @()
+            if ($null -ne $m.steps) { $steps = @($m.steps) }
+            $doneN = 0
+            foreach ($s in $steps) { if (Get-StepDone $s) { $doneN++ } }
+            $rows += [pscustomobject]@{ kind = 'milestone'; m = $mi; s = -1; title = $mTitle; done = $doneN; total = $steps.Count; check = '' }
+            $si = -1
+            foreach ($s in $steps) {
+                $si++
+                $rows += [pscustomobject]@{ kind = 'step'; m = $mi; s = $si; title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0; check = (Get-StepCheck $s) }
+            }
+        }
+    }
+    $top = @()
+    if ($null -ne $Goal.steps) { $top = @($Goal.steps) }
+    if ($top.Count -gt 0) {
+        $doneN = 0
+        foreach ($s in $top) { if (Get-StepDone $s) { $doneN++ } }
+        if ($ms.Count -gt 0) {
+            $rows += [pscustomobject]@{ kind = 'milestone'; m = -1; s = -1; title = '其他步骤'; done = $doneN; total = $top.Count; check = '' }
+        }
+        $si = -1
+        foreach ($s in $top) {
+            $si++
+            $rows += [pscustomobject]@{ kind = 'step'; m = -1; s = $si; title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0; check = (Get-StepCheck $s) }
+        }
+    }
+    return @($rows)
+}
+
+function Set-StepDone($Goal, $mIdx, $sIdx, $done) {
+    if ($mIdx -ge 0) {
+        $ms = @($Goal.milestones)
+        if ($mIdx -ge $ms.Count) { return }
+        $steps = @($ms[$mIdx].steps)
+        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
+        $st = $steps[$sIdx]
+    } else {
+        $steps = @($Goal.steps)
+        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
+        $st = $steps[$sIdx]
+    }
+    if ($null -eq $st -or $st -is [string]) { return }
+    $nowIso = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
+    $st | Add-Member -NotePropertyName status -NotePropertyValue ($(if ($done) { 'done' } else { 'todo' })) -Force
+    $st | Add-Member -NotePropertyName doneAt -NotePropertyValue ($(if ($done) { $nowIso } else { $null })) -Force
+    $st | Add-Member -NotePropertyName done -NotePropertyValue $done -Force
+}
+
+function Remove-GoalStep($Goal, $mIdx, $sIdx) {
+    if ($mIdx -ge 0) {
+        $ms = @($Goal.milestones)
+        if ($mIdx -ge $ms.Count) { return }
+        $steps = @($ms[$mIdx].steps)
+        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
+        $new = @()
+        for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $sIdx) { $new += $steps[$k] } }
+        $ms[$mIdx].steps = $new
+    } else {
+        $steps = @($Goal.steps)
+        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
+        $new = @()
+        for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $sIdx) { $new += $steps[$k] } }
+        $Goal.steps = $new
+    }
+}
+
+function Add-GoalStep($Goal, $text) {
+    $seq = 0
+    if ($null -ne $Goal.stepSeq) { $seq = [int]$Goal.stepSeq }
+    $seq++
+    $Goal | Add-Member -NotePropertyName stepSeq -NotePropertyValue $seq -Force
+    $newStep = [pscustomobject]@{ id = ('s{0}' -f $seq); text = $text.Trim(); title = $text.Trim(); done = $false; status = 'todo' }
+    $ms = @()
+    if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
+    if ($ms.Count -gt 0) {
+        $m = $ms[0]
+        $mid = 'm1'
+        if ($null -ne $m.id) { $mid = [string]$m.id }
+        $gid = [string]$Goal.id
+        $newStep | Add-Member -NotePropertyName stepId -NotePropertyValue ('{0}-{1}-s{2}' -f $gid, $mid, $seq) -Force
+        $m.steps = @($m.steps) + @($newStep)
+    } else {
+        $Goal.steps = @($Goal.steps) + @($newStep)
+    }
+}
 
 function Read-GoalsData {
     $path = Join-Path $DataDir 'goals.json'
@@ -1312,28 +1425,21 @@ function Read-GoalsData {
                     $text = $text.Trim()
                     if ([string]::IsNullOrWhiteSpace($text)) { continue }
                     $n++
-                    $steps = @()
-                    $seq = 0
-                    foreach ($st in @($item.steps)) {
-                        if ($null -eq $st) { continue }
-                        $stText = ''
-                        if ($st -is [string]) { $stText = $st } elseif ($null -ne $st.text) { $stText = [string]$st.text }
-                        $stText = $stText.Trim()
-                        if ([string]::IsNullOrWhiteSpace($stText)) { continue }
-                        $seq++
-                        $done = $false
-                        if ($st -isnot [string] -and $null -ne $st.done) { $done = [bool]$st.done }
-                        $steps += [pscustomobject]@{ id = ('s{0}' -f $seq); text = $stText; done = $done }
-                    }
                     $created = ''
                     if ($null -ne $item.createdAt) { $created = [string]$item.createdAt }
+                    if ($item -is [string]) {
+                        $item = [pscustomobject]@{ id = ('g{0}' -f $n); text = $text; createdAt = $created; status = 'active'; steps = @() }
+                    }
+                    if ($null -eq $item.id -or [string]::IsNullOrWhiteSpace([string]$item.id)) {
+                        $item | Add-Member -NotePropertyName id -NotePropertyValue ('g{0}' -f $n) -Force
+                    }
                     $list += [pscustomobject]@{
-                        id = ('g{0}' -f $n)
+                        id = [string]$item.id
                         text = $text
                         createdAt = $created
                         status = 'active'
-                        steps = @($steps)
-                        stepSeq = $seq
+                        raw = $item
+                        rows = @(Get-GoalRows $item)
                     }
                 }
             }
@@ -1347,8 +1453,13 @@ function Read-GoalsData {
 function Save-GoalsData {
     try {
         $nowIso = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
-        $payload = [pscustomobject]@{ updatedAt = $nowIso; goals = [object[]]$script:GoalsData }
-        $json = ($payload | ConvertTo-Json -Depth 8)
+        $goals = @()
+        foreach ($v in @($script:GoalsData)) {
+            if ($null -eq $v) { continue }
+            if ($null -ne $v.raw) { $goals += $v.raw }
+        }
+        $payload = [pscustomobject]@{ updatedAt = $nowIso; goals = [object[]]$goals }
+        $json = ($payload | ConvertTo-Json -Depth 12)
         [System.IO.File]::WriteAllText($script:GoalsPath, $json + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
         return $true
     } catch {
@@ -1365,6 +1476,11 @@ function Rebuild-GoalsPanel {
         $still = $false
         foreach ($gg in @($script:GoalsData)) { if ([string]$gg.id -eq [string]$script:EditingGoal) { $still = $true } }
         if (-not $still) { $script:EditingGoal = $null }
+    }
+    # 勾选/增删之后 rows 会过期，重画面之前先按原始对象重算一遍
+    foreach ($v in @($script:GoalsData)) {
+        if ($null -eq $v) { continue }
+        if ($null -ne $v.raw) { $v.rows = @(Get-GoalRows $v.raw) }
     }
     $script:GoalsStack.Children.Clear()
     $script:GoalsCards = @()
@@ -1548,10 +1664,42 @@ function Rebuild-GoalsPanel {
         [void]$inner.Children.Add($bar)
 
         $stepsPanel = [System.Windows.Controls.StackPanel]::new()
-        $si = -1
-        foreach ($st in @($g.steps)) {
-            $si++
+        $anyStep = $false
+        foreach ($row in @($g.rows)) {
+            if ($row.kind -eq 'milestone') {
+                $msRow = [System.Windows.Controls.Grid]::new()
+                $msRow.Margin = [System.Windows.Thickness]::new(0, 8, 0, 2)
+                $mc1 = [System.Windows.Controls.ColumnDefinition]::new()
+                $mc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+                $mc2 = [System.Windows.Controls.ColumnDefinition]::new()
+                $mc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+                [void]$msRow.ColumnDefinitions.Add($mc1)
+                [void]$msRow.ColumnDefinitions.Add($mc2)
+                $msTitle = [System.Windows.Controls.TextBlock]::new()
+                $msTitle.Text = [string]$row.title
+                $msTitle.FontSize = 11.5
+                $msTitle.FontWeight = [System.Windows.FontWeights]::SemiBold
+                $msTitle.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(215, 148, 180, 226))
+                [System.Windows.Controls.Grid]::SetColumn($msTitle, 0)
+                [void]$msRow.Children.Add($msTitle)
+                $msCount = [System.Windows.Controls.TextBlock]::new()
+                $msCount.Text = ('{0}/{1}' -f [int]$row.done, [int]$row.total)
+                $msCount.FontSize = 10.5
+                $msCount.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+                $msCount.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                $msCount.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 255, 255))
+                [System.Windows.Controls.Grid]::SetColumn($msCount, 1)
+                [void]$msRow.Children.Add($msCount)
+                [void]$stepsPanel.Children.Add($msRow)
+                continue
+            }
+            $anyStep = $true
+            $mIdx = [int]$row.m
+            $sIdx = [int]$row.s
+            $indent = 0
+            if ($mIdx -ge 0) { $indent = 10 }
             $stepRow = [System.Windows.Controls.Grid]::new()
+            $stepRow.Margin = [System.Windows.Thickness]::new($indent, 1, 0, 1)
             $sc1 = [System.Windows.Controls.ColumnDefinition]::new()
             $sc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
             $sc2 = [System.Windows.Controls.ColumnDefinition]::new()
@@ -1559,48 +1707,43 @@ function Rebuild-GoalsPanel {
             [void]$stepRow.ColumnDefinitions.Add($sc1)
             [void]$stepRow.ColumnDefinitions.Add($sc2)
             $cb = [System.Windows.Controls.CheckBox]::new()
-            $cb.IsChecked = [bool]$st.done
+            $cb.IsChecked = [bool]$row.done
+            $cb.VerticalContentAlignment = [System.Windows.VerticalAlignment]::Top
             $cb.Margin = [System.Windows.Thickness]::new(0, 2, 0, 2)
-            $cb.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 226, 233, 242))
-            $txt = [System.Windows.Controls.TextBlock]::new()
-            $txt.Text = [string]$st.text
-            $txt.FontSize = 12.5
-            $txt.TextWrapping = [System.Windows.TextWrapping]::Wrap
-            $txt.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-            if ($st.done) {
-                $txt.TextDecorations = [System.Windows.TextDecorations]::Strikethrough
-                $txt.Opacity = 0.55
+            $stText = [System.Windows.Controls.TextBlock]::new()
+            $stText.Text = [string]$row.title
+            $stText.FontSize = 12.5
+            $stText.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $stText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 226, 233, 242))
+            if ($row.done) {
+                $stText.TextDecorations = [System.Windows.TextDecorations]::Strikethrough
+                $stText.Opacity = 0.55
             }
-            $cb.Content = $txt
-            $cb.Tag = @{ g = $cardIndex; s = $si }
+            $checkText = [string]$row.check
+            if (-not [string]::IsNullOrWhiteSpace($checkText)) {
+                $stack = [System.Windows.Controls.StackPanel]::new()
+                [void]$stack.Children.Add($stText)
+                $checkTb = [System.Windows.Controls.TextBlock]::new()
+                $checkTb.Text = ('验：' + $checkText)
+                $checkTb.FontSize = 10.5
+                $checkTb.TextWrapping = [System.Windows.TextWrapping]::Wrap
+                $checkTb.Margin = [System.Windows.Thickness]::new(0, 1, 0, 0)
+                $checkTb.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 255, 255, 255))
+                if ($row.done) { $checkTb.Opacity = 0.5 }
+                [void]$stack.Children.Add($checkTb)
+                $cb.Content = $stack
+            } else {
+                $cb.Content = $stText
+            }
+            $cb.Tag = @{ g = $cardIndex; m = $mIdx; s = $sIdx }
             $cb.Add_Click({
                 param($s, $e)
                 $tag = $s.Tag
                 $gIdx = [int]$tag.g
-                $sIdx = [int]$tag.s
                 if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
-                $goal = $script:GoalsData[$gIdx]
-                if ($sIdx -lt 0 -or $sIdx -ge @($goal.steps).Count) { return }
-                $goal.steps[$sIdx].done = [bool]$s.IsChecked
-                $txt = $s.Content
-                if ($null -ne $txt) {
-                    if ($s.IsChecked) {
-                        $txt.TextDecorations = [System.Windows.TextDecorations]::Strikethrough
-                        $txt.Opacity = 0.55
-                    } else {
-                        $txt.TextDecorations = $null
-                        $txt.Opacity = 1.0
-                    }
-                }
-                [void](Save-GoalsData)
-                $doneCount = @($goal.steps | Where-Object { $_.done }).Count
-                $totalCount = @($goal.steps).Count
-                $cards = @($script:GoalsCards)
-                if ($gIdx -lt $cards.Count) {
-                    $cards[$gIdx].count.Text = ('{0}/{1}' -f $doneCount, $totalCount)
-                    if ($totalCount -gt 0) { $cards[$gIdx].bar.Value = (100.0 * $doneCount / $totalCount) }
-                    else { $cards[$gIdx].bar.Value = 0 }
-                }
+                $v = $script:GoalsData[$gIdx]
+                Set-StepDone -Goal $v.raw -mIdx ([int]$tag.m) -sIdx ([int]$tag.s) -done ([bool]$s.IsChecked)
+                if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
             [System.Windows.Controls.Grid]::SetColumn($cb, 0)
             [void]$stepRow.Children.Add($cb)
@@ -1614,7 +1757,7 @@ function Rebuild-GoalsPanel {
             $delStep.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
             $delStep.Cursor = [System.Windows.Input.Cursors]::Hand
             $delStep.ToolTip = '删掉这步'
-            $delStep.Tag = @{ g = $cardIndex; s = $si }
+            $delStep.Tag = @{ g = $cardIndex; m = $mIdx; s = $sIdx }
             $delStepGlyph = [System.Windows.Controls.TextBlock]::new()
             $delStepGlyph.Text = '×'
             $delStepGlyph.FontSize = 15
@@ -1629,23 +1772,16 @@ function Rebuild-GoalsPanel {
                 $e.Handled = $true
                 $tag = $s.Tag
                 $gIdx = [int]$tag.g
-                $sIdx = [int]$tag.s
                 if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
-                $goal = $script:GoalsData[$gIdx]
-                $steps = @($goal.steps)
-                if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
-                $newSteps = @()
-                for ($k = 0; $k -lt $steps.Count; $k++) {
-                    if ($k -ne $sIdx) { $newSteps += $steps[$k] }
-                }
-                $goal.steps = $newSteps
+                $v = $script:GoalsData[$gIdx]
+                Remove-GoalStep -Goal $v.raw -mIdx ([int]$tag.m) -sIdx ([int]$tag.s)
                 if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
             [System.Windows.Controls.Grid]::SetColumn($delStep, 1)
             [void]$stepRow.Children.Add($delStep)
             [void]$stepsPanel.Children.Add($stepRow)
         }
-        if (@($g.steps).Count -eq 0) {
+        if (-not $anyStep) {
             $empty = [System.Windows.Controls.TextBlock]::new()
             $empty.Text = '还没拆步骤 —— 加一步，今天就能动。'
             $empty.FontSize = 11.5
@@ -1695,9 +1831,7 @@ function Rebuild-GoalsPanel {
             if ($gIdx -ge $boxes.Count -or $null -eq $boxes[$gIdx]) { return }
             $text = [string]$boxes[$gIdx].Text
             if ([string]::IsNullOrWhiteSpace($text)) { return }
-            $goal = $script:GoalsData[$gIdx]
-            $goal.stepSeq = [int]$goal.stepSeq + 1
-            $goal.steps = @($goal.steps) + @([pscustomobject]@{ id = ('s{0}' -f $goal.stepSeq); text = $text.Trim(); done = $false })
+            Add-GoalStep -Goal $script:GoalsData[$gIdx].raw -text $text
             if (Save-GoalsData) {
                 $boxes[$gIdx].Text = ''
                 Rebuild-GoalsPanel
@@ -1713,9 +1847,7 @@ function Rebuild-GoalsPanel {
             if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
             $text = [string]$s.Text
             if ([string]::IsNullOrWhiteSpace($text)) { return }
-            $goal = $script:GoalsData[$gIdx]
-            $goal.stepSeq = [int]$goal.stepSeq + 1
-            $goal.steps = @($goal.steps) + @([pscustomobject]@{ id = ('s{0}' -f $goal.stepSeq); text = $text.Trim(); done = $false })
+            Add-GoalStep -Goal $script:GoalsData[$gIdx].raw -text $text
             if (Save-GoalsData) {
                 $s.Text = ''
                 Rebuild-GoalsPanel
@@ -1745,8 +1877,13 @@ function Rebuild-GoalsPanel {
         [void]$actions.Children.Add($planBtn)
         [void]$inner.Children.Add($actions)
 
-        $doneCount = @($g.steps | Where-Object { $_.done }).Count
-        $totalCount = @($g.steps).Count
+        $doneCount = 0
+        $totalCount = 0
+        foreach ($row in @($g.rows)) {
+            if ($row.kind -ne 'step') { continue }
+            $totalCount++
+            if ($row.done) { $doneCount++ }
+        }
         $countTb.Text = ('{0}/{1}' -f $doneCount, $totalCount)
         if ($totalCount -gt 0) { $bar.Value = (100.0 * $doneCount / $totalCount) } else { $bar.Value = 0 }
         $script:GoalsCards += @([pscustomobject]@{ bar = $bar; count = $countTb; panel = $stepsPanel })

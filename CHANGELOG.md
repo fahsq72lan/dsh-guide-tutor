@@ -3318,3 +3318,28 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 - `git revert <本次提交>`。被删的那行是机器文本、无信息量；若要原样找回，可从 `plugin.log` 的对应时间段重建。
+
+## 2026-11-15 15:29 目标看板支持「阶段 + 步骤」，保存不再吃掉 milestones
+
+**改了什么**（全部在 `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`）
+- 新增 7 个纯函数：`Get-StepTitle` / `Get-StepCheck` / `Get-StepDone` / `Get-GoalRows`（把目标摊成「阶段行 + 步骤行」）/ `Set-StepDone` / `Remove-GoalStep` / `Add-GoalStep`。
+- `Read-GoalsData` 重写：每个目标额外挂 `raw`（原始 JSON 对象，含 milestones/acceptance/caps/stepId…）与 `rows`（渲染用视图）；兼容纯字符串旧格式。
+- `Save-GoalsData` 重写：写回 `raw`，`ConvertTo-Json -Depth 12`；不再重建只有 6 个字段的新对象。
+- `Rebuild-GoalsPanel` 开头：先按 `raw` 重算每个目标的 `rows`，再清空重画。
+- 步骤渲染段（原 1550-1656 行）重写：先画阶段行（标题 + 该阶段 `0/2`），再画缩进的步骤行；步骤下的 `验：…` 小字来自 `check` 字段。
+- 勾选/删除步骤改为按 `{g,m,s}` 三元组定位到 `raw` 里的真实步骤；添加步骤走 `Add-GoalStep`（挂到第一个阶段，生成 `stepId`）。
+- 顺手修掉一处我自己引入的重复：`[void]$inner.Children.Add($addRow)` 写了两遍，第二次会抛「指定的 Visual 已经是另一个 Visual 的子级」（`overlay.log` 里 `goals debug open failed … @1857`）。
+
+**为什么**
+- 14:22 把目标升级成 `milestones[].steps[]` 两层结构后，看板还按 `goal.steps` 单层读，**一步都显示不出来**。
+- 更严重：旧 `Save-GoalsData` 把每个目标重建成 `{id,text,createdAt,status,steps,stepSeq}` 再整份覆写，`milestones`/`acceptance`/`caps`/`stepId` 全部不在其中——**打开看板点一下就会把拆解成果抹掉**。
+
+**怎么验证**
+- 数据层：`tmp` 下的临时脚本用 AST 从 `overlay.ps1` 抽出真函数，对 `goals.json` 副本跑：`g1: rows=12 milestone=4 step=8`、`g2: rows=9 milestone=3 step=6`；勾掉 `g1-m1-s1` 后保存再读回，`acceptance=True milestones=4 steps=8 s1.status=done stepId=g1-m1-s1 check=True caps=1 units=1` 全部保留。
+- 界面：`overlay.log` 出现 `goals debug: window opened`（临时钩子，已删除）；截 `tmp/gw-crop.png`、`tmp/gw-after-check.png`——阶段标题「基础语法过一遍 0/2」、步骤下 `验：不报错，输出和书上截图一致`、勾选后整卡变 `1/6`、阶段变 `1/2`、该行加删除线。
+- 语法：`[Parser]::ParseFile` 0 错误；文件头 BOM 仍是 `239,187,191`；overlay 重启后 `overlay.log` 无 err。
+- 测试用的那次勾选已撤销（`g2-m1-s1` 回到 `status=todo / doneAt=null`），`goals.json` 现状 `g1 4 阶段 8 步`、`g2 3 阶段 6 步`。
+
+**怎么恢复**
+- 改前整份备份：`D:\dsh_TestSpace\guide-tutor\tmp\overlay.before-goals-v3.ps1`（278249 字节，5703 行）。
+- 或 `git revert <本次提交>`；只想救数据不回代码，可从 `tmp/goals.with-milestones.json` / `tmp/goals.before-check.json` 取回目标结构。
