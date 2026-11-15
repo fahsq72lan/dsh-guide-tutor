@@ -3566,3 +3566,25 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 已恢复：从 `tmp/goals.before-check.json` 写回 g1(4 阶段 8 步)、g2(3 阶段 6 步)，`updatedAt` 刷新为恢复时刻。
 - 仍缺：15:28 把 `g1-m1-s1`「装 JDK 17 并确认版本」拆成的 3 个子步（下载 Temurin 17 / 配 JAVA_HOME 与 Path / IDEA 里选中 JDK）不在这份备份里，需要重新拆；其余内容与 14:39 一致。
 - 原始被覆盖前的文件没有单独留档（被 `guide_goal add` 直接 writeFile），这是这次最该避免的地方。
+
+## 2026-11-15 19:45 杂务卡支持加 / 改名 / 删
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：`case 'chore_done'` 重写（`event.done === false` 时把当天的 `lastDone` 清掉，算取消勾选）；新增 `case 'chore_add'` / `case 'chore_update'` / `case 'chore_remove'` 三个 overlay 事件，分别落盘、推 state、写 daylog。合计约 +60 行。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：杂务卡头从 2 列改 3 列并加蓝色「＋」按钮（`Send-OverlayEvent @{type='chore_add'}`）；每行末尾加「✎」（改名字，`$script:EditingChore = Tag` 后 `Rebuild-GoalsPanel`）与「✕」（`chore_remove`）；渲染时若 `$script:EditingChore` 等于该条 id，名称位置换成 `TextBox`（Enter 发 `chore_update`、Esc 取消）。约 +95 / −20 行。
+
+**为什么**
+用户问「为什么没有针对杂务部分的增删改查？」——后端 `guide_chores` 早就有 `list/add/update/remove/done/plan/auto`，但桌面看板上的杂务卡只渲染 checkbox + 名字 + 时间，没有任何增删改入口，等于只能通过聊天改。
+
+**怎么验证**
+- `node --check index.js` exit 0；`overlay.ps1` 用 `[Parser]::ParseInput` 校验 0 错误、BOM 仍是 `239,187,191`。
+- 实机点击：点「＋」→ `plugin.log` 出现 `chore added: c4 新杂务`，`chores.json` 多一条；点「✕」→ `chore removed: c1`，文件少一条；点「✎」→ 名字变输入框，输入「洗澡2」回车 → `chore updated: c2`、`chores.json` 改名成功。
+- 截图：`D:\dsh_TestSpace\guide-tutor\tmp\chore-ui4.png`（＋ 与 ✕）、`tmp\chore-edit8.png`（改名输入框）、`tmp\chore-final.png`（最终三件套）。
+
+**怎么恢复**
+- 代码：`git revert` 本次提交。
+- 数据（本次测试动过 `C:\Users\易千纸\.dsh\guide-tutor\chores.json`）：测试加的 `c4 新杂务` 已删除；误删的 `c1 洗衣服`（30 分 / 晚上 / every2）已按原值写回；改名的 `c2` 已从「洗澡2」改回「洗澡」。当前三条：c1 洗衣服、c2 洗澡、c3 倒垃圾。
+
+**踩坑记录**
+- `TextBlock` 上挂 `MouseLeftButtonUp` 不稳，改成外层套 `Border`（`Background=Transparent`）才稳定命中——「✕」和「✎」都是这么修的。
+- 我给 `$script:EditingChore = $null` 的初始化插错了位置（插进了 `Rebuild-GoalsPanel` 内部），导致每次重画都把编辑态清掉、点了没反应；已删掉那一行。

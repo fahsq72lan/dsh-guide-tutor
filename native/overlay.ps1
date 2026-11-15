@@ -1603,6 +1603,19 @@ function Save-GoalsData {
             if ($null -eq $v) { continue }
             if ($null -ne $v.raw) { $goals += $v.raw }
         }
+        # 内存里一个目标都没有、盘上却明明有：多半是刚才读失败或窗口还没加载完，
+        # 这时绝不能用空表把用户的目标冲掉（2026-11-15 已经这么丢过一次）。
+        if (@($goals).Count -eq 0 -and (Test-Path $script:GoalsPath)) {
+            try {
+                $diskText = [System.IO.File]::ReadAllText($script:GoalsPath)
+                $diskData = $diskText | ConvertFrom-Json
+                if (@($diskData.goals).Count -gt 0) {
+                    Write-Log 'goals save skipped: 内存为空但盘上有目标，拒绝覆盖'
+                    return $false
+                }
+            } catch {
+            }
+        }
         $payload = [pscustomobject]@{ updatedAt = $nowIso; goals = [object[]]$goals }
         $json = ($payload | ConvertTo-Json -Depth 12)
         [System.IO.File]::WriteAllText($script:GoalsPath, $json + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
@@ -1652,8 +1665,11 @@ function Rebuild-GoalsPanel {
         $cc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
         $cc2 = [System.Windows.Controls.ColumnDefinition]::new()
         $cc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+        $cc3 = [System.Windows.Controls.ColumnDefinition]::new()
+        $cc3.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
         [void]$chead.ColumnDefinitions.Add($cc1)
         [void]$chead.ColumnDefinitions.Add($cc2)
+        [void]$chead.ColumnDefinitions.Add($cc3)
         $ctitle = [System.Windows.Controls.TextBlock]::new()
         $ctitle.Text = '杂务'
         $ctitle.FontSize = 14.5
@@ -1668,6 +1684,25 @@ function Rebuild-GoalsPanel {
         $ccount.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(200, 139, 157, 181))
         [System.Windows.Controls.Grid]::SetColumn($ccount, 1)
         [void]$chead.Children.Add($ccount)
+
+        $cadd = [System.Windows.Controls.Border]::new()
+        $cadd.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 46, 92, 165))
+        $cadd.CornerRadius = [System.Windows.CornerRadius]::new(6)
+        $cadd.Padding = [System.Windows.Thickness]::new(7, 0, 7, 1)
+        $cadd.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+        $cadd.Cursor = [System.Windows.Input.Cursors]::Hand
+        $cadd.ToolTip = '加一件杂务'
+        $caddText = [System.Windows.Controls.TextBlock]::new()
+        $caddText.Text = '＋'
+        $caddText.FontSize = 11.5
+        $caddText.Foreground = [System.Windows.Media.Brushes]::White
+        $cadd.Child = $caddText
+        $cadd.Add_MouseLeftButtonUp({
+            Send-OverlayEvent @{ type = 'chore_add' }
+        })
+        [System.Windows.Controls.Grid]::SetColumn($cadd, 2)
+        [void]$chead.Children.Add($cadd)
+
         [void]$cinner.Children.Add($chead)
 
         $chint = [System.Windows.Controls.TextBlock]::new()
@@ -1685,8 +1720,11 @@ function Rebuild-GoalsPanel {
             $cr1.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
             $cr2 = [System.Windows.Controls.ColumnDefinition]::new()
             $cr2.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            $cr3 = [System.Windows.Controls.ColumnDefinition]::new()
+            $cr3.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
             [void]$crow.ColumnDefinitions.Add($cr1)
             [void]$crow.ColumnDefinitions.Add($cr2)
+            [void]$crow.ColumnDefinitions.Add($cr3)
             $crow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
 
             $cbox = [System.Windows.Controls.CheckBox]::new()
@@ -1732,7 +1770,53 @@ function Rebuild-GoalsPanel {
             else {
                 $cname.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 226, 234, 245))
             }
-            [void]$ctexts.Children.Add($cname)
+            if ($null -ne $script:EditingChore -and [string]$script:EditingChore -eq [string]$ci.id) {
+                $cedit = [System.Windows.Controls.TextBox]::new()
+                $cedit.Text = [string]$ci.title
+                $cedit.FontSize = 12.5
+                $cedit.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 226, 234, 245))
+                $cedit.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 38, 44, 54))
+                $cedit.CaretBrush = [System.Windows.Media.Brushes]::White
+                $cedit.BorderThickness = [System.Windows.Thickness]::new(1)
+                $cedit.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(120, 90, 160, 255))
+                $cedit.Padding = [System.Windows.Thickness]::new(3, 0, 3, 0)
+                $cedit.Tag = [string]$ci.id
+                $cedit.Add_KeyDown({
+                        param($s, $e)
+                        if ($e.Key -eq [System.Windows.Input.Key]::Escape) {
+                            $e.Handled = $true
+                            $script:EditingChore = $null
+                            Rebuild-GoalsPanel
+                            return
+                        }
+                        if ($e.Key -ne [System.Windows.Input.Key]::Enter) { return }
+                        $e.Handled = $true
+                        $val = [string]$s.Text
+                        if (-not [string]::IsNullOrWhiteSpace($val)) {
+                            Send-OverlayEvent @{ type = 'chore_update'; id = [string]$s.Tag; title = $val.Trim() }
+                        }
+                        $script:EditingChore = $null
+                    })
+                [void]$ctexts.Children.Add($cedit)
+                $script:GoalEditBox = $cedit
+            }
+            else {
+                $cname.Cursor = [System.Windows.Input.Cursors]::Hand
+                $cname.ToolTip = '点一下改名'
+                $cname.Tag = [string]$ci.id
+                $cnameWrap = [System.Windows.Controls.Border]::new()
+                $cnameWrap.Background = [System.Windows.Media.Brushes]::Transparent
+                $cnameWrap.Cursor = [System.Windows.Input.Cursors]::Hand
+                $cnameWrap.ToolTip = '点一下改名'
+                $cnameWrap.Tag = [string]$ci.id
+                $cnameWrap.Child = $cname
+                $cnameWrap.Add_MouseLeftButtonUp({
+                        param($s, $e)
+                        $script:EditingChore = [string]$s.Tag
+                        Rebuild-GoalsPanel
+                    })
+                [void]$ctexts.Children.Add($cnameWrap)
+            }
 
             $cmeta = [System.Windows.Controls.TextBlock]::new()
             $cwhen = [string]$ci.window
@@ -1759,6 +1843,51 @@ function Rebuild-GoalsPanel {
 
             [System.Windows.Controls.Grid]::SetColumn($ctexts, 1)
             [void]$crow.Children.Add($ctexts)
+
+            $cacts = [System.Windows.Controls.StackPanel]::new()
+            $cacts.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+            $cacts.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+
+            $ceditText = [System.Windows.Controls.TextBlock]::new()
+            $ceditText.Text = '✎'
+            $ceditText.FontSize = 11.5
+            $ceditText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $ceditText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(145, 150, 190, 245))
+            $cedit = [System.Windows.Controls.Border]::new()
+            $cedit.Background = [System.Windows.Media.Brushes]::Transparent
+            $cedit.Padding = [System.Windows.Thickness]::new(8, 2, 4, 2)
+            $cedit.Cursor = [System.Windows.Input.Cursors]::Hand
+            $cedit.ToolTip = '改名字'
+            $cedit.Tag = [string]$ci.id
+            $cedit.Child = $ceditText
+            $cedit.Add_MouseLeftButtonUp({
+                    param($s, $e)
+                    $script:EditingChore = [string]$s.Tag
+                    Rebuild-GoalsPanel
+                })
+            [void]$cacts.Children.Add($cedit)
+
+            $cdelText = [System.Windows.Controls.TextBlock]::new()
+            $cdelText.Text = '✕'
+            $cdelText.FontSize = 11
+            $cdelText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $cdelText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 210, 168, 176))
+            $cdel = [System.Windows.Controls.Border]::new()
+            $cdel.Background = [System.Windows.Media.Brushes]::Transparent
+            $cdel.Padding = [System.Windows.Thickness]::new(4, 2, 4, 2)
+            $cdel.Cursor = [System.Windows.Input.Cursors]::Hand
+            $cdel.ToolTip = '删掉这件杂务'
+            $cdel.Tag = [string]$ci.id
+            $cdel.Child = $cdelText
+            $cdel.Add_MouseLeftButtonUp({
+                    param($s, $e)
+                    Send-OverlayEvent @{ type = 'chore_remove'; id = [string]$s.Tag }
+                })
+            [void]$cacts.Children.Add($cdel)
+
+            [System.Windows.Controls.Grid]::SetColumn($cacts, 2)
+            [void]$crow.Children.Add($cacts)
+
             [void]$cinner.Children.Add($crow)
         }
 

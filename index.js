@@ -730,20 +730,75 @@ async function handleEvent(event) {
         break
       }
       case 'chore_done': {
-        // 目标看板上把一件杂务勾了：记 lastDone，顺手把清单里挂着它的那条也勾上。
+        // 目标看板上勾/取消一件杂务：勾了记 lastDone，顺手把清单里挂着它的那条也勾上。
         const id = String(event.id || '').trim()
         if (!id) break
-        const marked = chores.done(id, todayKey(new Date()))
-        if (!marked.ok) {
-          log(`chore done failed: ${marked.error}`)
+        const wantDone = event.done !== false
+        if (wantDone) {
+          const marked = chores.done(id, todayKey(new Date()))
+          if (!marked.ok) {
+            log(`chore done failed: ${marked.error}`)
+            break
+          }
+          appendDaylog('activity', `杂务完成：${marked.chore.title}`)
+          const todayPlan = plan.forToday()
+          const hit = (todayPlan.items || []).find((i) => String(i.choreId) === id && !i.done)
+          if (hit) plan.setDone(hit.id, true)
+          pushChoreState()
+          log(`chore done from overlay: ${id}`)
           break
         }
-        appendDaylog('activity', `杂务完成：${marked.chore.title}`)
-        const todayPlan = plan.forToday()
-        const hit = (todayPlan.items || []).find((i) => String(i.choreId) === id && !i.done)
-        if (hit) plan.setDone(hit.id, true)
+        // 取消勾选：只把「今天」这一次的 lastDone 撤掉，历史不动。
+        const mine = (chores.read().chores || []).find((c) => c.id === id)
+        if (mine && String(mine.lastDone || '') === todayKey(new Date())) {
+          chores.update(id, { lastDone: null })
+          appendDaylog('activity', `取消杂务完成：${mine.title}`)
+        }
         pushChoreState()
-        log(`chore done from overlay: ${id}`)
+        log(`chore undone from overlay: ${id}`)
+        break
+      }
+      case 'chore_add': {
+        // 看板上「＋」加一件：先落默认值，名字随后在行内改。
+        const title = String(event.title || '').trim() || '新杂务'
+        const added = chores.add({ title, minutes: 20, window: 'any', every: 'daily' })
+        if (!added.ok) {
+          log(`chore add failed: ${added.error}`)
+          break
+        }
+        pushChoreState()
+        appendDaylog('activity', `加了杂务：${added.chore.title}`)
+        log(`chore added: ${added.chore.id} ${added.chore.title}`)
+        break
+      }
+      case 'chore_update': {
+        const id = String(event.id || '').trim()
+        if (!id) break
+        const patch = {}
+        if (event.title !== undefined) patch.title = String(event.title).trim().slice(0, 20)
+        if (event.minutes !== undefined && Number.isFinite(Number(event.minutes))) patch.minutes = Number(event.minutes)
+        if (event.window !== undefined) patch.window = String(event.window)
+        if (event.every !== undefined) patch.every = String(event.every)
+        const updated = chores.update(id, patch)
+        if (!updated.ok) {
+          log(`chore update failed: ${updated.error}`)
+          break
+        }
+        pushChoreState()
+        log(`chore updated: ${id}`)
+        break
+      }
+      case 'chore_remove': {
+        const id = String(event.id || '').trim()
+        if (!id) break
+        const removed = chores.remove(id)
+        if (!removed.ok) {
+          log(`chore remove failed: ${removed.error}`)
+          break
+        }
+        pushChoreState()
+        appendDaylog('activity', `删掉杂务：${removed.removed.title}`)
+        log(`chore removed: ${id}`)
         break
       }
       case 'goal_removed': {
