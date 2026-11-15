@@ -1327,6 +1327,7 @@ function Count-Leaves($step) {
 
 # 递归把「一步及其子步骤」压成行；path 是定位用的索引链，如 0.1.2。
 function Add-StepRows($out, $steps, $mIdx, $prefix, $level) {
+    if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
     $si = -1
     foreach ($s in @($steps)) {
         $si++
@@ -1334,19 +1335,26 @@ function Add-StepRows($out, $steps, $mIdx, $prefix, $level) {
         $kids = @()
         if ($null -ne $s.children) { $kids = @($s.children) }
         $path = ('{0}.{1}' -f $prefix, $si)
+        $sid = ''
+        if ($null -ne $s.stepId) { $sid = [string]$s.stepId }
+        if ([string]::IsNullOrWhiteSpace($sid)) { $sid = $path }
         $gd = 0
         $gt = 0
-        if ($kids.Count -gt 0) {
+        $hasKids = ($kids.Count -gt 0)
+        if ($hasKids) {
             $lk = Count-Leaves $s
             $gd = [int]$lk.done
             $gt = [int]$lk.total
         }
+        $collapsed = $false
+        if ($hasKids -and $script:GoalCollapsed.ContainsKey($sid)) { $collapsed = [bool]$script:GoalCollapsed[$sid] }
         $out.Add([pscustomobject]@{
             kind = 'step'; m = $mIdx; s = $si; path = $path; level = $level
             title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0
             groupDone = $gd; groupTotal = $gt; check = (Get-StepCheck $s)
+            sid = $sid; hasKids = $hasKids; collapsed = $collapsed
         }) | Out-Null
-        if ($kids.Count -gt 0) { Add-StepRows $out $kids $mIdx $path ($level + 1) }
+        if ($hasKids -and -not $collapsed) { Add-StepRows $out $kids $mIdx $path ($level + 1) }
     }
 }
 
@@ -1839,10 +1847,13 @@ function Rebuild-GoalsPanel {
             $indent = 10 + (($lvl - 1) * 16)
             $stepRow = [System.Windows.Controls.Grid]::new()
             $stepRow.Margin = [System.Windows.Thickness]::new($indent, 1, 0, 1)
+            $sc0 = [System.Windows.Controls.ColumnDefinition]::new()
+            $sc0.Width = [System.Windows.GridLength]::new(16, [System.Windows.GridUnitType]::Pixel)
             $sc1 = [System.Windows.Controls.ColumnDefinition]::new()
             $sc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
             $sc2 = [System.Windows.Controls.ColumnDefinition]::new()
             $sc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+            [void]$stepRow.ColumnDefinitions.Add($sc0)
             [void]$stepRow.ColumnDefinitions.Add($sc1)
             [void]$stepRow.ColumnDefinitions.Add($sc2)
             $cb = [System.Windows.Controls.CheckBox]::new()
@@ -1887,7 +1898,38 @@ function Rebuild-GoalsPanel {
                 Set-StepDoneAt -Goal $v.raw -path ([string]$tag.path) -done ([bool]$s.IsChecked)
                 if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
-            [System.Windows.Controls.Grid]::SetColumn($cb, 0)
+            if ([bool]$row.hasKids) {
+                $tw = [System.Windows.Controls.Border]::new()
+                $tw.Width = 16
+                $tw.Height = 18
+                $tw.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(0, 0, 0, 0))
+                $tw.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+                $tw.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+                $tw.Cursor = [System.Windows.Input.Cursors]::Hand
+                $tw.ToolTip = $(if ([bool]$row.collapsed) { '展开子步骤' } else { '收起子步骤' })
+                $twGlyph = [System.Windows.Controls.TextBlock]::new()
+                if ([bool]$row.collapsed) { $twGlyph.Text = [string][char]0x25B8 } else { $twGlyph.Text = [string][char]0x25BE }
+                $twGlyph.FontSize = 11
+                $twGlyph.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+                $twGlyph.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                $twGlyph.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 148, 180, 226))
+                $tw.Child = $twGlyph
+                $tw.Tag = [string]$row.sid
+                $tw.Add_MouseEnter({ param($s, $e) $s.Child.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 148, 180, 226)) })
+                $tw.Add_MouseLeave({ param($s, $e) $s.Child.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 148, 180, 226)) })
+                $tw.Add_MouseLeftButtonUp({
+                    param($s, $e)
+                    $e.Handled = $true
+                    $key = [string]$s.Tag
+                    if ([string]::IsNullOrWhiteSpace($key)) { return }
+                    if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
+                    if ($script:GoalCollapsed.ContainsKey($key)) { $script:GoalCollapsed.Remove($key) } else { $script:GoalCollapsed[$key] = $true }
+                    Rebuild-GoalsPanel
+                })
+                [System.Windows.Controls.Grid]::SetColumn($tw, 0)
+                [void]$stepRow.Children.Add($tw)
+            }
+            [System.Windows.Controls.Grid]::SetColumn($cb, 1)
             [void]$stepRow.Children.Add($cb)
 
             $delStep = [System.Windows.Controls.Border]::new()
@@ -1919,7 +1961,7 @@ function Rebuild-GoalsPanel {
                 Remove-GoalStepAt -Goal $v.raw -path ([string]$tag.path)
                 if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
-            [System.Windows.Controls.Grid]::SetColumn($delStep, 1)
+            [System.Windows.Controls.Grid]::SetColumn($delStep, 2)
             [void]$stepRow.Children.Add($delStep)
             [void]$stepsPanel.Children.Add($stepRow)
         }
@@ -2019,14 +2061,21 @@ function Rebuild-GoalsPanel {
         [void]$actions.Children.Add($planBtn)
         [void]$inner.Children.Add($actions)
 
+        # 总数按「树」算，不按画出来的行算——组步收起后总数不能跟着变少。
         $doneCount = 0
         $totalCount = 0
-        foreach ($row in @($g.rows)) {
-            if ($row.kind -ne 'step') { continue }
-            # 组步不计数，交给它下面的实步（否则父和子会重复算）
-            if ([int]$row.groupTotal -gt 0) { continue }
-            $totalCount++
-            if ($row.done) { $doneCount++ }
+        $treeSteps = @()
+        if ($null -ne $g.raw.milestones) {
+            foreach ($m in @($g.raw.milestones)) {
+                if ($null -ne $m -and $null -ne $m.steps) { $treeSteps += @($m.steps) }
+            }
+        }
+        if ($null -ne $g.raw.steps) { $treeSteps += @($g.raw.steps) }
+        foreach ($st in $treeSteps) {
+            if ($null -eq $st) { continue }
+            $lk = Count-Leaves $st
+            $doneCount += [int]$lk.done
+            $totalCount += [int]$lk.total
         }
         $countTb.Text = ('{0}/{1}' -f $doneCount, $totalCount)
         if ($totalCount -gt 0) { $bar.Value = (100.0 * $doneCount / $totalCount) } else { $bar.Value = 0 }
@@ -2048,6 +2097,9 @@ function Rebuild-GoalsPanel {
         })
     }
 }
+
+# 哪些组步被收起来了（键是 stepId，只在本次运行里记，重启回到全展开）。
+if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
 
 function Show-GoalsWindow {
     $script:EditingGoal = $null

@@ -3371,3 +3371,22 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 - 代码：`git revert` 本次提交。
 - 数据：`g1-m1-s1` 下的 3 个子步是这次拆的，不想要就在看板上把子步 × 掉、或从 `tmp/goals.before-check.json` 取回拆之前的结构。
+
+## 2026-11-15 16:00 有子步骤的行可以折叠（▸/▾）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - `Add-StepRows()`（约 L1329-1363）：行对象多三个字段 `sid`（stepId，缺了退回 path）、`hasKids`、`collapsed`；命中折叠表时不递归子行。
+  - 步骤行从两列改成三列：折叠钮（16px）| 内容 | 删除（约 L1843-1855）。
+  - 新增折叠三角（约 L1930-1968）：`▸` 收起 / `▾` 展开，ToolTip「展开子步骤 / 收起子步骤」，点击切 `$script:GoalCollapsed[$sid]` 后 `Rebuild-GoalsPanel`；只有组步显示，实步留空位保持对齐。
+  - 新增 `$script:GoalCollapsed` 表（`Show-GoalsWindow` 之前初始化，只活在内存里，重启回到全展开）。
+  - 顺手修一个跟着暴露的 bug：卡片右上角总数原来按「画出来的行」数，折叠后会从 `0/10` 变成 `0/7`；改成按树算（`Count-Leaves`），折叠不影响总数。
+- `D:\dsh_TestSpace\guide-tutor\tmp\test-goalrows.ps1`：新增 6 条折叠断言（无关键不改变行数、折叠一个组步少 3 行、collapsed/hasKids 标记、折叠后仍显示 0/3、阶段总数不变）。
+**为什么**
+- 用户要求「这种小目标可以折叠」。拆到三层以后（装 JDK 17 → 下载/配环境变量/IDEA 选中），一个目标在板上就有十几行，滚起来费劲。
+**怎么验证**
+- `tmp/test-goalrows.ps1` 25 passed；`tmp/test-units.mjs` 38、`tmp/test-decompose.mjs` 28、`tmp/test-nested.mjs` 16、`tmp/e2e-real.mjs` 9 全过。
+- 界面：`tmp/gw-collapsed2.png` 收起时「装 JDK 17 并确认版本 0/3」前是 `▸`、三个子步不显示、卡片仍是 `0/10`；`tmp/gw-tri-click.png` 点 `▸` 后变 `▾`、三个子步展开、阶段仍 `0/4`。
+- 实测顺带确认了级联：误点到 checkbox 时整卡从 `0/10` 变 `3/10`、组步 `3/3`，再点一次回到 `todo`。
+**怎么恢复**
+- 代码：`git revert` 本次提交；折叠表只在内存里，删掉 `$script:GoalCollapsed` 相关代码即回到全展开。
