@@ -2285,6 +2285,13 @@ function Show-DispatchWindow {
     $title.FontSize = 15
     $title.FontWeight = [System.Windows.FontWeights]::SemiBold
     $title.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(245, 236, 242, 250))
+    $title.Cursor = [System.Windows.Input.Cursors]::SizeAll
+    $title.ToolTip = '按住这里可以拖动窗口'
+    $title.Add_MouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try { $win.DragMove() } catch { }
+        })
     [System.Windows.Controls.Grid]::SetColumn($title, 0)
     [void]$head.Children.Add($title)
 
@@ -2334,6 +2341,7 @@ function Show-DispatchWindow {
     $slider.Value = $current
     $slider.TickFrequency = 1
     $slider.IsSnapToTickEnabled = $true
+    $slider.IsMoveToPointEnabled = $true
     $slider.Margin = [System.Windows.Thickness]::new(0, 8, 0, 14)
     $script:DispatchSlider = $slider
     $slider.Add_ValueChanged({
@@ -2343,6 +2351,58 @@ function Show-DispatchWindow {
             $valueSub.Text = ('  ≈ {0} 小时' -f ([math]::Round($v * 30 / 60, 1)))
         })
     [void]$stack.Children.Add($slider)
+
+    # 滑块拖不动时的备用按钮：点一下加一格/减一格，一定点得中。
+    $stepRow = [System.Windows.Controls.StackPanel]::new()
+    $stepRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $stepRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $stepRow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
+
+    $minus = [System.Windows.Controls.Border]::new()
+    $minus.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 50, 62))
+    $minus.CornerRadius = [System.Windows.CornerRadius]::new(6)
+    $minus.Padding = [System.Windows.Thickness]::new(14, 2, 14, 2)
+    $minus.Cursor = [System.Windows.Input.Cursors]::Hand
+    $minusText = [System.Windows.Controls.TextBlock]::new()
+    $minusText.Text = '−'
+    $minusText.FontSize = 15
+    $minusText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 226, 234, 245))
+    $minus.Child = $minusText
+    $minus.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try {
+                $sl = $script:DispatchSlider
+                if ($null -ne $sl -and $sl.Value -gt $sl.Minimum) { $sl.Value = $sl.Value - 1 }
+            } catch { }
+        })
+    [void]$stepRow.Children.Add($minus)
+
+    $gap = [System.Windows.Controls.TextBlock]::new()
+    $gap.Text = '   '
+    $gap.FontSize = 10
+    [void]$stepRow.Children.Add($gap)
+
+    $plus = [System.Windows.Controls.Border]::new()
+    $plus.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 112, 230))
+    $plus.CornerRadius = [System.Windows.CornerRadius]::new(6)
+    $plus.Padding = [System.Windows.Thickness]::new(14, 2, 14, 2)
+    $plus.Cursor = [System.Windows.Input.Cursors]::Hand
+    $plusText = [System.Windows.Controls.TextBlock]::new()
+    $plusText.Text = '＋'
+    $plusText.FontSize = 15
+    $plusText.Foreground = [System.Windows.Media.Brushes]::White
+    $plus.Child = $plusText
+    $plus.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try {
+                $sl = $script:DispatchSlider
+                if ($null -ne $sl -and $sl.Value -lt $sl.Maximum) { $sl.Value = $sl.Value + 1 }
+            } catch { }
+        })
+    [void]$stepRow.Children.Add($plus)
+    [void]$stack.Children.Add($stepRow)
 
     $btnRow = [System.Windows.Controls.StackPanel]::new()
     $btnRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
@@ -2391,10 +2451,7 @@ function Show-DispatchWindow {
     [void]$stack.Children.Add($btnRow)
 
     $win.Add_Closed({ $script:DispatchWindow = $null })
-    $win.Add_MouseLeftButtonDown({
-            param($s, $e)
-            try { $win.DragMove() } catch { }
-        })
+    # 拖动窗口只在标题上生效，滑块/按钮不会被窗口拖动吃掉手势。
 
     $script:DispatchWindow = $win
     $win.Show()
