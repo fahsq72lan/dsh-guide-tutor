@@ -2001,6 +2001,14 @@ async function handleEvent(event) {
       try {
         const sessionId = String(session?.id ?? '')
         if (!sessionId || !event) return
+        // 用户说的话默认就记，不再靠模型判断「这句值不值得留」。
+        if (event.type === 'user/message') {
+          if (isMainSession(sessionId)) {
+            const said = userTurnText(event.data)
+            if (said) appendDaylog('say', said)
+          }
+          return
+        }
         if (event.type === 'turn/start') {
           turnTextBySession.set(sessionId, '')
           if (isMainSession(sessionId)) {
@@ -2277,6 +2285,23 @@ async function handleEvent(event) {
     if (Array.isArray(saved?.keys)) firedKeys = new Set(saved.keys)
   } catch {
     reminderDate = todayKey(new Date())
+  }
+
+  // 把一条用户消息摊成纯文本：文字原样留，图片/文件只留占位。
+  function userTurnText(message) {
+    const blocks = Array.isArray(message?.content) ? message.content : []
+    const parts = []
+    for (const b of blocks) {
+      if (b?.type === 'text' && b.text) parts.push(String(b.text))
+      else if (b?.type === 'image') parts.push('[图片]')
+      else if (b?.type === 'file') parts.push(`[文件 ${b?.attachment?.name || ''}]`.trim())
+    }
+    return redactSecrets(parts.join('\n').trim())
+  }
+
+  // 日志里不落密钥：24 位以上连续字母数字（含 . _ - %）只留前 6 位。
+  function redactSecrets(text) {
+    return String(text || '').replace(/[A-Za-z0-9._%-]{24,}/g, (m) => `${m.slice(0, 6)}…（已打码）`)
   }
 
   function appendDaylog(kind, text, extra = {}) {
@@ -3316,11 +3341,22 @@ async function handleEvent(event) {
   const API_PORT = Number(config.apiPort) || 41999
   let apiServer = null
   let apiPort = 0
+  // 热重载很急的时候，server 可能已经 listen 了、但 listen 回调还没跑（apiServer 仍是 null），
+  // 那就关不掉了。所以一造出来就进集合，dispose 时按集合逐个关。
+  const apiServers = new Set()
 
   function startApiServer(port = API_PORT, attempt = 0) {
     if (disposed || apiServer) return
     const server = createServer(apiHandler)
+    apiServers.add(server)
+    server.once('close', () => apiServers.delete(server))
     server.once('error', (error) => {
+      try {
+        server.close()
+      } catch {
+        /* ignore */
+      }
+      apiServers.delete(server)
       if (error?.code === 'EADDRINUSE' && attempt < 8) {
         log(`api port ${port} busy, trying ${port + 1}`)
         startApiServer(port + 1, attempt + 1)
@@ -3363,13 +3399,21 @@ async function handleEvent(event) {
         /* ignore */
       }
       apiDispose = null
+      for (const server of apiServers) {
+        try {
+          server.close()
+          server.closeAllConnections?.()
+        } catch {
+          /* ignore */
+        }
+      }
+      apiServers.clear()
       try {
         apiServer?.close()
         apiServer?.closeAllConnections?.()
       } catch {
         /* ignore */
       }
-      apiServer = null
       apiServer = null
     }
   })

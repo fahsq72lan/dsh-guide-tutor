@@ -3262,3 +3262,21 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 - `git checkout HEAD~1 -- lib/units.js lib/capabilities.js tmp/test-units.mjs`；或把 `COLD_START_PRIOR` 改回 `(0+2)/(0+3)`、`NOVELTY_BY_SEEN.unknown` 改回 0.7、删掉 `pCap` 里那段 `unknown === caps.length` 的分支。
+## 2026-11-15 14:58 用户说的话默认落 daylog（不再靠模型判断值不值得记）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js` L2004-2012：`session/event` 监听里新增 `user/message` 分支——主会话收到用户消息就把文本写进 `daylog-YYYY-MM-DD.jsonl`，`kind` 用 `say`。
+- 同文件 L2291-2305：新增 `userTurnText(message)`（取 text block；图片记 `[图片]`；文件记 `[文件 名字]`）与 `redactSecrets(text)`（24 位以上连续字母数字含 `._%-` 只留前 6 位，防止 SESSDATA / apiKey 落盘）。
+- 同文件 L3342-3370：新增 `apiServers` 集合，`startApiServer()` 造出 server 就入集合；`error` 分支先 `close()` 再重试下一端口。L3392-3412 的 dispose 改成遍历集合逐个关闭（原来只关 `apiServer`，而热重载太快时 listen 回调还没跑、`apiServer` 仍是 null，端口就漏了）。
+
+**为什么**
+- 用户 m03360「不是我说过的话默认要记忆的啊」。原设计把「记不记」交给模型调 `guide_journal`，结果 11-15 一整天只落 1 行系统 note，用户说的话一条没留。这是设计错误，不是漏调工具。
+- 顺带修 `plugin.log` 里的 `api port 41999 busy … 42002` 与 `duplicate prefix route "/api/guide-tutor"`：同一个 pid 同时监听 41999–42002 四个端口，来自多次热重载时旧 server 没被关掉。
+
+**怎么验证**
+- `node --check index.js` → exit 0。
+- `redactSecrets` 样例：`SESSDATA=e9902167%2C1790000000%2Cabcd%2CIIEC` → `SESSDATA=e99021…（已打码）`；`apiKey 0583c87e…` → `apiKey 0583c8…（已打码）`；普通句子与 B 站链接原样保留。
+- 端口泄漏要重启 DSH 才能验证干净（旧实例跑的是修之前的代码，这轮重载清不掉它）。
+
+**怎么恢复**
+- `git revert <本次提交>`。若只想退回「模型自己判断要不要记」，删掉 L2004-2012 的 `user/message` 分支即可，`userTurnText`/`redactSecrets` 留着不碍事。
