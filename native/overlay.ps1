@@ -1632,6 +1632,139 @@ function Rebuild-GoalsPanel {
     $script:GoalsStack.Children.Clear()
     $script:GoalsCards = @()
     $script:GoalsStepBoxes = @()
+
+    # 杂务：每天那些琐碎事（洗衣、洗澡、倒垃圾），不属于任何目标，但每天要花时间。
+    $choreState = $null
+    if ($null -ne $script:LastState -and $null -ne $script:LastState.chores) { $choreState = $script:LastState.chores }
+    if ($null -ne $choreState -and @($choreState.items).Count -gt 0) {
+        $ccard = [System.Windows.Controls.Border]::new()
+        $ccard.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 27, 32, 40))
+        $ccard.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(34, 255, 255, 255))
+        $ccard.BorderThickness = [System.Windows.Thickness]::new(1)
+        $ccard.CornerRadius = [System.Windows.CornerRadius]::new(12)
+        $ccard.Padding = [System.Windows.Thickness]::new(14, 12, 14, 12)
+        $ccard.Margin = [System.Windows.Thickness]::new(0, 0, 0, 10)
+        $cinner = [System.Windows.Controls.StackPanel]::new()
+        $ccard.Child = $cinner
+
+        $chead = [System.Windows.Controls.Grid]::new()
+        $cc1 = [System.Windows.Controls.ColumnDefinition]::new()
+        $cc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+        $cc2 = [System.Windows.Controls.ColumnDefinition]::new()
+        $cc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+        [void]$chead.ColumnDefinitions.Add($cc1)
+        [void]$chead.ColumnDefinitions.Add($cc2)
+        $ctitle = [System.Windows.Controls.TextBlock]::new()
+        $ctitle.Text = '杂务'
+        $ctitle.FontSize = 14.5
+        $ctitle.FontWeight = [System.Windows.FontWeights]::SemiBold
+        $ctitle.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(245, 236, 242, 250))
+        [System.Windows.Controls.Grid]::SetColumn($ctitle, 0)
+        [void]$chead.Children.Add($ctitle)
+        $ccount = [System.Windows.Controls.TextBlock]::new()
+        $ccount.Text = ('{0}/{1}' -f [int]$choreState.done, [int]$choreState.total)
+        $ccount.FontSize = 12
+        $ccount.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+        $ccount.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(200, 139, 157, 181))
+        [System.Windows.Controls.Grid]::SetColumn($ccount, 1)
+        [void]$chead.Children.Add($ccount)
+        [void]$cinner.Children.Add($chead)
+
+        $chint = [System.Windows.Controls.TextBlock]::new()
+        $chint.Text = '每天那些琐碎事，到点自动排进清单'
+        $chint.FontSize = 10.5
+        $chint.Margin = [System.Windows.Thickness]::new(0, 2, 0, 8)
+        $chint.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 150, 170, 195))
+        [void]$cinner.Children.Add($chint)
+
+        $choreIndex = -1
+        foreach ($ci in @($choreState.items)) {
+            $choreIndex++
+            $crow = [System.Windows.Controls.Grid]::new()
+            $cr1 = [System.Windows.Controls.ColumnDefinition]::new()
+            $cr1.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+            $cr2 = [System.Windows.Controls.ColumnDefinition]::new()
+            $cr2.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            [void]$crow.ColumnDefinitions.Add($cr1)
+            [void]$crow.ColumnDefinitions.Add($cr2)
+            $crow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
+
+            $cbox = [System.Windows.Controls.CheckBox]::new()
+            $cbox.IsChecked = [bool]$ci.done
+            $cbox.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $cbox.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+            $cbox.Tag = [int]$choreIndex
+            $cbox.add_Click({
+                    param($s, $e)
+                    $idx = [int]$s.Tag
+                    if ($null -eq $script:LastState -or $null -eq $script:LastState.chores) { return }
+                    $list = @($script:LastState.chores.items)
+                    if ($idx -lt 0 -or $idx -ge $list.Count) { return }
+                    $target = $list[$idx]
+                    if ($s.IsChecked -eq $true) {
+                        if (-not $target.done) {
+                            $target.done = $true
+                            $script:LastState.chores.done = [int]$script:LastState.chores.done + 1
+                            Send-OverlayEvent @{ type = 'chore_done'; id = [string]$target.id }
+                        }
+                    }
+                    else {
+                        if ($target.done) {
+                            $target.done = $false
+                            $script:LastState.chores.done = [Math]::Max(0, [int]$script:LastState.chores.done - 1)
+                        }
+                    }
+                    Rebuild-GoalsPanel
+                })
+            [System.Windows.Controls.Grid]::SetColumn($cbox, 0)
+            [void]$crow.Children.Add($cbox)
+
+            $ctexts = [System.Windows.Controls.StackPanel]::new()
+            $cname = [System.Windows.Controls.TextBlock]::new()
+            $cname.Text = [string]$ci.title
+            $cname.FontSize = 12.5
+            $cname.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+            $cname.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+            if ([bool]$ci.done) {
+                $cname.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 150, 168, 190))
+                $cname.TextDecorations = [System.Windows.TextDecorations]::Strikethrough
+            }
+            else {
+                $cname.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 226, 234, 245))
+            }
+            [void]$ctexts.Children.Add($cname)
+
+            $cmeta = [System.Windows.Controls.TextBlock]::new()
+            $cwhen = [string]$ci.window
+            $clabel = $cwhen
+            try {
+                switch ($cwhen) {
+                    'morning' { $clabel = '上午' }
+                    'noon' { $clabel = '中午' }
+                    'afternoon' { $clabel = '下午' }
+                    'evening' { $clabel = '晚上' }
+                    default { $clabel = '随时' }
+                }
+            }
+            catch { $clabel = '随时' }
+            if ([string]::IsNullOrWhiteSpace([string]$ci.from)) {
+                $cmeta.Text = ('{0} · 约 {1} 分 · 今天还没排' -f $clabel, [int]$ci.minutes)
+            }
+            else {
+                $cmeta.Text = ('{0} · {1}–{2} · {3} 分' -f $clabel, [string]$ci.from, [string]$ci.to, [int]$ci.minutes)
+            }
+            $cmeta.FontSize = 10
+            $cmeta.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 150, 170, 195))
+            [void]$ctexts.Children.Add($cmeta)
+
+            [System.Windows.Controls.Grid]::SetColumn($ctexts, 1)
+            [void]$crow.Children.Add($ctexts)
+            [void]$cinner.Children.Add($crow)
+        }
+
+        [void]$script:GoalsStack.Children.Add($ccard)
+    }
+
     $gi = -1
     foreach ($g in @($script:GoalsData)) {
         $gi++

@@ -3390,3 +3390,26 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 实测顺带确认了级联：误点到 checkbox 时整卡从 `0/10` 变 `3/10`、组步 `3/3`，再点一次回到 `todo`。
 **怎么恢复**
 - 代码：`git revert` 本次提交；折叠表只在内存里，删掉 `$script:GoalCollapsed` 相关代码即回到全展开。
+
+## 2026-11-15 16:15 新增「杂务」：每天的琐碎事单独管，到点自动排进清单
+
+**改了什么**
+- 新建 `D:\dsh_TestSpace\guide-tutor\lib\chores.js`（约 300 行）：`CHORE_WINDOWS`（morning/noon/afternoon/evening/any）、`WINDOW_LABEL`、`WINDOW_RANGE`、`EVERY`（daily/weekdays/weekly/every2/every3）、`EVERY_LABEL`、`normalizeChore()`、`dueToday()`（按 lastDone 算间隔）、`planChores()`（在偏好时段里找不与清单冲突的空档，短的先排，两条之间留 5 分钟）、`createChores()`（读写 `~/.dsh/guide-tutor/chores.json`，id 自动 c1/c2）。
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js`：清单条目新增 `choreId`；`guide_plan` schema 加 `choreId`；`createPlan` 新增 `onChoreDone`，勾完成时回调。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - 新增 `choreDay()` / `choreLines()` / `pushChoreState()` / `onChoreDone()` / `autoPlanChores()`。
+  - 新增 `guide_chores` 工具：`list` / `add` / `update` / `remove` / `done` / `plan`（只算不写）/ `auto`（写进清单）。
+  - ticker 每 5 分钟推一次 `state.chores`；每天第一次过 07:30 且今天还有没排的 → 自动排进清单（`choreAutoDate` 去重）。
+  - overlay 事件新增 `chore_done`：记 lastDone、写 daylog、顺手把清单里挂着它的那条勾上。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：`Rebuild-GoalsPanel()` 在目标卡之前插一张「杂务」卡（标题 + `N/总数` + 说明 + 每条一行：勾选框 / 名称 / 时段与时长），勾选发 `Send-OverlayEvent @{type='chore_done'}` 并本地乐观更新。
+- 新增 `D:\dsh_TestSpace\guide-tutor\tmp\test-chores.mjs`（37 条断言）。
+**为什么**
+- 用户要求「给目标加入一个小模块，名字叫（你来取），作用是每天的一些细碎琐事，比如洗衣服洗袜子洗澡等等事情，然后让ai自动排时间」。洗衣、洗澡、倒垃圾这类事每天都要花时间，但既不属于任何目标、也不该混进目标步骤里；单独一栏才能既不占目标进度、又不漏掉。
+**怎么验证**
+- `tmp/test-chores.mjs` 37 passed；`tmp/test-units.mjs` 38、`tmp/test-decompose.mjs` 28、`tmp/test-nested.mjs` 16、`tmp/e2e-real.mjs` 9、`tmp/test-goalrows.ps1` 25 全过。
+- 真实数据：`chores.json` 写入三条（洗衣服 30 分/晚上/隔天、洗澡 25 分/晚上/每天、倒垃圾 10 分/随时/隔天），重载后日志出现 `chore auto plan start 2026-11-15`，`plan.json` 自动多出 `16:25-16:35 倒垃圾`、`19:00-19:25 洗澡`、`19:30-20:00 洗衣服`，三条都带 `choreId`。
+- 界面：`tmp/gw-chores3.png` 看板顶部「杂务 0/3」+ 三行；点「倒垃圾」后 `tmp/gw-chore-done.png` 显示 `1/3`、该行划线变灰，`chores.json` 的 `c3.lastDone=2026-11-15`、`plan.json` 里 16:25 那条 `done=true`，日志 `chore done from overlay: c3`。
+**怎么恢复**
+- 代码：`git revert` 本次提交。
+- 数据：`chores.json` 是新建文件，删掉即回到没有杂务的状态；自动排进清单的三条可以用 `guide_plan action=remove` 划掉。
+- 注意：`state.chores` 是运行态字段，删掉代码后旧 state 里会留着，不影响使用。

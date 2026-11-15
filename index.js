@@ -35,6 +35,15 @@ import {
   branchCount,
 } from './lib/decompose.js'
 import { estimateWin } from './lib/units.js'
+import {
+  createChores,
+  planChores,
+  minutesOf as choreMinutesOf,
+  WINDOW_LABEL,
+  EVERY_LABEL,
+  CHORE_WINDOWS,
+  EVERY,
+} from './lib/chores.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NATIVE_DIR = path.join(HERE, 'native')
@@ -718,6 +727,23 @@ async function handleEvent(event) {
         // 置 false，点完垃圾桶整个助手就"消失"了）。
         log('clear annots requested from overlay')
         writeState({ annots: [], captureMode: false })
+        break
+      }
+      case 'chore_done': {
+        // 目标看板上把一件杂务勾了：记 lastDone，顺手把清单里挂着它的那条也勾上。
+        const id = String(event.id || '').trim()
+        if (!id) break
+        const marked = chores.done(id, todayKey(new Date()))
+        if (!marked.ok) {
+          log(`chore done failed: ${marked.error}`)
+          break
+        }
+        appendDaylog('activity', `杂务完成：${marked.chore.title}`)
+        const todayPlan = plan.forToday()
+        const hit = (todayPlan.items || []).find((i) => String(i.choreId) === id && !i.done)
+        if (hit) plan.setDone(hit.id, true)
+        pushChoreState()
+        log(`chore done from overlay: ${id}`)
         break
       }
       case 'quit':
@@ -2575,10 +2601,251 @@ async function handleEvent(event) {
     mutedSpeakMessages,
     speak: speakText,
     onStepDone: onGoalStepChange,
+    onChoreDone: (info) => onChoreDone(info),
   })
   const guidePlanTool = plan.tool
 
   // 「目标拆解」：目标 → 阶段 → 步骤，「做完一步」直接反映到进度。
+  // ---- 杂务：每天那些琐碎的、不做会积起来的事（洗衣服、洗澡、倒垃圾） ----
+  const chores = createChores({ dataDir, log })
+
+  // 今日视图：全部杂务、今天该做的、今天已经排进清单的。
+  function choreDay(dateKey = todayKey(new Date())) {
+    const all = chores.list()
+    const due = chores.today(dateKey)
+    const planToday = plan.forToday()
+    const planned = (planToday.items || []).filter((i) => i.choreId)
+    const plannedIds = new Set(planned.map((i) => String(i.choreId)))
+    return { all, due, planned, plannedIds, planToday }
+  }
+
+  // 杂务的今日视图推进 state，看板与清单用的是同一份事实。
+  function pushChoreState(dateKey = todayKey(new Date())) {
+    const day = choreDay(dateKey)
+    const items = day.due.map((c) => {
+      const planned = day.planned.find((i) => String(i.choreId) === c.id)
+      return {
+        id: c.id,
+        title: c.title,
+        minutes: c.minutes,
+        window: c.window,
+        every: c.every,
+        from: planned ? planned.from : '',
+        to: planned ? planned.to : '',
+        done: Boolean(planned && planned.done),
+        lastDone: c.lastDone,
+      }
+    })
+    // 看板上按时间从上到下排：已排了的按开始时间，没排的垫底。
+    items.sort((a, b) => {
+      const af = a.from || '99:99'
+      const bf = b.from || '99:99'
+      if (af !== bf) return af < bf ? -1 : 1
+      return b.minutes - a.minutes
+    })
+    writeState({
+      chores: {
+        date: dateKey,
+        items,
+        total: items.length,
+        done: items.filter((i) => i.done).length,
+      },
+    })
+    return items
+  }
+
+  // 清单里勾了带 choreId 的条目 → 记下这件杂务做完了。
+  function onChoreDone({ choreId, done, title }) {
+    if (!choreId || !done) return null
+    const result = chores.done(choreId, todayKey(new Date()))
+    if (result.ok) appendDaylog('activity', `杂务完成：${title || choreId}`)
+    pushChoreState()
+    return result
+  }
+
+  function choreLines(day) {
+    const lines = []
+    for (const c of day.due) {
+      const when = day.planned.find((i) => String(i.choreId) === c.id)
+      const mark = when ? '✓' : '·'
+      const span = when ? `${when.from}–${when.to}` : '还没排'
+      lines.push(`${mark} ${c.title}（${c.minutes} 分钟 · ${WINDOW_LABEL[c.window]} · ${EVERY_LABEL[c.every]}）${span}`)
+    }
+    if (!lines.length) lines.push('今天没有要做的杂务')
+    return lines
+  }
+
+  // 代码先排一轮：按偏好时段塞空档。排不下的不硬挤，如实报出来。
+  async function autoPlanChores({ dateKey = todayKey(new Date()), now = new Date() } = {}) {
+    const day = choreDay(dateKey)
+    const pending = day.due.filter((c) => !day.plannedIds.has(c.id))
+    if (pending.length === 0) {
+      return { ok: true, items: [], skipped: [], lines: ['今天要做的杂务都已经排上了'] }
+    }
+    const nowMin = now.getHours() * 60 + now.getMinutes()
+    const busy = (day.planToday.items || []).map((i) => ({ from: i.from, to: i.to }))
+    const result = planChores({ chores: pending, dateKey, nowMin, busy })
+    const created = []
+    for (const item of result.items) {
+      const added = await planRun({
+        action: 'add',
+        from: item.from,
+        to: item.to,
+        title: item.chore.title,
+        place: '宿舍',
+        note: `杂务 · ${WINDOW_LABEL[item.chore.window]} · ${item.minutes} 分钟`,
+        priority: 'P2',
+        choreId: item.chore.id,
+      })
+      if (added?.ok) created.push({ ...item, planId: added.id })
+    }
+    const lines = created.map((i) => `排上 ${i.from}–${i.to} ${i.chore.title}`)
+    for (const s of result.skipped) lines.push(`排不下：${s.chore.title}（${s.reason}）`)
+    if (created.length) {
+      appendDaylog('activity', `杂务排程：${created.map((i) => `${i.chore.title} ${i.from}`).join('、')}`)
+    }
+    return { ok: true, items: created, skipped: result.skipped, lines }
+  }
+
+  const guideChoresTool = {
+    name: 'guide_chores',
+    description:
+      '杂务：每天琐碎但要花时间的事（洗衣服、洗澡、倒垃圾、剪指甲），不属于任何目标。list=看今天该做的、已排的；add=加一条（title/minutes/window/every）；update=改一条；remove=删一条；done=今天这件做完了（记 lastDone，every2/every3 会据此重算）；plan=只算不写，看今天能塞进哪些空档；auto=按偏好时段自动排进今天的清单（写 plan，带 choreId）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'list / add / update / remove / done / plan / auto' },
+        id: { type: 'string', description: 'update/remove/done：杂务 id，如 c1' },
+        title: { type: 'string', description: 'add/update：杂务名，如 洗衣服' },
+        minutes: { type: 'number', description: 'add/update：大概多少分钟（默认 20）' },
+        window: {
+          type: 'string',
+          description: 'add/update：偏好时段 morning 上午 / noon 中午 / afternoon 下午 / evening 晚上 / any 随时',
+        },
+        every: {
+          type: 'string',
+          description: 'add/update：多久一次 daily 每天 / weekdays 工作日 / weekly 每周（配 days）/ every2 隔天 / every3 每三天',
+        },
+        days: { type: 'string', description: 'add/update：weekly 时用，星期几，0 是周日，如 "1,4"' },
+        date: { type: 'string', description: 'plan/auto：日期 YYYY-MM-DD，默认今天' },
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => {
+        if (!value || value.ok === false) {
+          return [{ type: 'text', text: `没成：${value?.error || '未知原因'}` }]
+        }
+        const lines = []
+        if (Array.isArray(value.lines)) lines.push(...value.lines)
+        if (value.line) lines.push(value.line)
+        if (Array.isArray(value.chores)) {
+          for (const c of value.chores) {
+            lines.push(`${c.id} ${c.title} · ${c.minutes} 分钟 · ${c.window} · ${c.every}`)
+          }
+        }
+        if (value.hint) lines.push(value.hint)
+        return [{ type: 'text', text: lines.length ? lines.join('\n') : '好了' }]
+      },
+    },
+    async execute(args = {}) {
+      const action = String(args.action || 'list')
+      const dateKey = String(args.date || '').trim() || todayKey(new Date())
+      try {
+        if (action === 'list') {
+          const day = choreDay(dateKey)
+          const lines = choreLines(day)
+          if (day.all.length > day.due.length) {
+            lines.push(`（另有 ${day.all.length - day.due.length} 条今天不用做）`)
+          }
+          pushChoreState(dateKey)
+          return { ok: true, lines, chores: day.due }
+        }
+        if (action === 'add') {
+          const title = String(args.title || '').trim()
+          if (!title) return { ok: false, error: '要给个名字（title）' }
+          const days = String(args.days || '')
+            .split(',')
+            .map((d) => Number(d.trim()))
+            .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+          const added = chores.add({
+            title,
+            minutes: Number(args.minutes) || undefined,
+            window: args.window,
+            every: args.every,
+            days,
+          })
+          if (!added.ok) return { ok: false, error: added.error }
+          return {
+            ok: true,
+            chore: added.chore,
+            line: `加好了：${added.chore.title}（${added.chore.id}，${added.chore.minutes} 分钟，${EVERY_LABEL[added.chore.every]}）`,
+            hint: '要我排进今天吗？用 guide_chores auto。',
+          }
+        }
+        if (action === 'update') {
+          const id = String(args.id || '').trim()
+          if (!id) return { ok: false, error: '要指定 id' }
+          const patch = {}
+          if (args.title) patch.title = String(args.title)
+          if (args.minutes) patch.minutes = Number(args.minutes)
+          if (args.window) patch.window = String(args.window)
+          if (args.every) patch.every = String(args.every)
+          if (args.days !== undefined) {
+            patch.days = String(args.days)
+              .split(',')
+              .map((d) => Number(d.trim()))
+              .filter((d) => Number.isInteger(d) && d >= 0 && d <= 6)
+          }
+          const updated = chores.update(id, patch)
+          if (!updated.ok) return { ok: false, error: updated.error }
+          return { ok: true, chore: updated.chore, line: `改好了：${updated.chore.title}` }
+        }
+        if (action === 'remove') {
+          const id = String(args.id || '').trim()
+          if (!id) return { ok: false, error: '要指定 id' }
+          const removed = chores.remove(id)
+          if (!removed.ok) return { ok: false, error: removed.error }
+          return { ok: true, line: `删掉了：${removed.removed.title}` }
+        }
+        if (action === 'done') {
+          const id = String(args.id || '').trim()
+          if (!id) return { ok: false, error: '要指定 id' }
+          const done = chores.done(id, dateKey)
+          if (!done.ok) return { ok: false, error: done.error }
+          appendDaylog('activity', `杂务完成：${done.chore.title}`)
+          pushChoreState(dateKey)
+          return { ok: true, line: `记下了：今天${done.chore.title}做完了` }
+        }
+        if (action === 'plan') {
+          const day = choreDay(dateKey)
+          const pending = day.due.filter((c) => !day.plannedIds.has(c.id))
+          if (!pending.length) return { ok: true, lines: ['今天要做的杂务都已经排上了，没别的'] }
+          const now = new Date()
+          const nowMin = now.getHours() * 60 + now.getMinutes()
+          const busy = (day.planToday.items || []).map((i) => ({ from: i.from, to: i.to }))
+          const result = planChores({ chores: pending, dateKey, nowMin, busy })
+          const lines = result.items.map((i) => `${i.from}–${i.to} ${i.chore.title}（${i.minutes} 分钟）`)
+          for (const s of result.skipped) lines.push(`排不下：${s.chore.title}（${s.reason}）`)
+          return {
+            ok: true,
+            lines,
+            hint: '这是按空档算的，想写进清单就用 guide_chores auto；想换时间就直接 guide_plan add。',
+          }
+        }
+        if (action === 'auto') {
+          const result = await autoPlanChores({ dateKey })
+          pushChoreState(dateKey)
+          return result
+        }
+        return { ok: false, error: `不认识的 action：${action}` }
+      } catch (error) {
+        log(`guide_chores ${action} failed: ${error?.stack ?? error}`)
+        return { ok: false, error: String(error?.message ?? error) }
+      }
+    },
+  }
+
   const guideGoalTool = {
     name: 'guide_goal',
     description:
@@ -3543,6 +3810,8 @@ async function handleEvent(event) {
   ctx.effect(() => registerTool(guidePlanTool))
   // 目标拆解：目标 → 阶段 → 步骤，和清单/记录用 stepId 串起来。
   ctx.effect(() => registerTool(guideGoalTool))
+  // 杂务：每天那些琐碎事，独立于目标，但要占真实时间。
+  ctx.effect(() => registerTool(guideChoresTool))
   if (manage) {
     ctx.effect(() => registerTool(guideClockTool))
     ctx.effect(() => registerTool(guideJournalTool))
@@ -3585,6 +3854,28 @@ async function handleEvent(event) {
           planTick(new Date())
         } catch (error) {
           log(`plan tick failed: ${error?.message ?? error}`)
+        }
+      })
+      // 杂务：每天第一次过 07:30，把今天该做的琐事排进清单。已经排过就不动。
+      let choreAutoDate = ''
+      registerTickHandler(() => {
+        try {
+          const now = new Date()
+          const key = todayKey(now)
+          const minuteOfDay = now.getHours() * 60 + now.getMinutes()
+          if (minuteOfDay % 5 === 0) pushChoreState(key)
+          if (choreAutoDate === key) return
+          if (minuteOfDay < 7 * 60 + 30) return
+          choreAutoDate = key
+          const day = choreDay(key)
+          if (!day.due.length) return
+          if (day.due.every((c) => day.plannedIds.has(c.id))) return
+          log(`chore auto plan start ${key}`)
+          void autoPlanChores({ dateKey: key, now }).catch((error) =>
+            log(`chore auto plan failed: ${error?.message ?? error}`),
+          )
+        } catch (error) {
+          log(`chore tick failed: ${error?.message ?? error}`)
         }
       })
       if (manage) {
