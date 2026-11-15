@@ -3120,29 +3120,19 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
   - `tmp/try-caps.mjs`、`tmp/mk-design5.py` 直接删掉，无外部依赖。
 
 
-## 2026-11-15 13:48 能力状态改为「看成果」，不再采信用户自评
+## 2026-11-15 13:47 回退：取消「能力状态由成果推导」这批改动（7981ab3）
 
 - **改了什么**
-  - `lib/capabilities.js`（约 300 行）新增：`EVIDENCE{OUTPUT,ATTEMPT,CLAIM,NONE}`、`SATISFACTION.claimHave = 0.85`、`effectiveState(cap)`、`applyAttempt(cap, attempt)`、`verifyQueue(step, skill)`。
-  - `pCap()` 改为按 `effectiveState()` 计分：自称会但无产物 → 0.85；自称不会但没试过 → 按 unknown 0.75（不再一票否决）；只有带 `output/attempt` 证据的 lack 才真正归零。
-  - `normalizeCaps()` 保留 `evidence` 字段；旧的 `requires + mastery` 迁移路径标记为 `attempt` 证据。
-  - `planning/目标拆解与格-设计表.xlsx` 第 5 页重写「6. 证据从哪来（不靠自评）」整节（9 行：原则 / 证据分级 / 自称会 / 自称不会 / 真砸过 / 唯一入口 / 验证队列 / 冷启动 / 现场兜底），界面节补「自评的位置」一行，代码节补 `applyAttempt`、`verifyQueue`、`effectiveState`，验证节补 `tmp/try-evidence.mjs`。页面 51 行 → 59 行。
-  - 临时脚本 `tmp/try-evidence.mjs`（自评 vs 成果对比），按 `.gitignore` 不入库。
-
+  - `git revert 7981ab3`，一次提交撤掉三个文件的改动：`lib/capabilities.js`（-108 行，回到 203 行的四态版）、`planning/目标拆解与格-设计表.xlsx`（第 5 页回到 51 行的版本）、`CHANGELOG.md`（删掉 13:48「能力状态改为看成果」整条）。
+  - 保留上一版 `7c965b2` 的全部内容：`p_cap` 四态（have/partial/lack/unknown）、`normalizeCaps` 迁移、`expandable` 收敛闸门、`capGap`。
 - **为什么**
-  - 用户 m02447 指出：AI 对用户能力的判断不能由用户自己说得出，得看任务成果。原设计第 5 页写的是「AI 列能力牌 → 用户三选一：会 / 不会 / 不确定」，等于把自评当证据，会让爱面子的人高估、没自信的人被低估。
-  - 改成证据驱动：状态只能由 `applyAttempt()` 写入，用户口头说法只用于排验证顺序，不改状态。
-
+  - 用户 m02507：「我是说图中的内容其实不重要的意思，把改动退回吧」。指设计表第 5 页「发现机制」那节（AI 列牌 → 用户三选一）以及由此延伸出的「证据从哪来」整节，认为不值得为它增加这层复杂度。
+  - 判断标准：`applyAttempt`/`verifyQueue`/`effectiveState` 三件套是为「成果判定」服务的，但成果由谁验、怎么验还没定，先把代码退回到确定的四态模型，避免半成品逻辑留在主路径上。
 - **怎么验证**
-  - `node --check lib/capabilities.js` exit 0；`node tmp/test-units.mjs` → `38 passed`。
-  - `node tmp/try-evidence.mjs`：
-    - 字面 have 无证据 → 有效 `claimHave` 0.85；带 output 证据 → 1.0。
-    - 字面 lack 无证据 → 有效 `unknown` 0.75；带 attempt 证据（真砸过）→ 0。
-    - 两张无证据的牌组合 p_cap = 0.637（不再归零）。
-    - 验证队列：`cap-maven`（自称会无产物，优先级 3）排在 `cap-ioc`（自称不会没试过，优先级 2）之前。
-    - `applyAttempt`：done+产物+验过 → have；done+产物未验 → partial；partial → partial；stuck → lack。
-
+  - `git log --oneline -2` 显示新提交在 `7c965b2` 之后，`git show --stat HEAD` 显示 `lib/capabilities.js` 减少 108 行、xlsx 变小。
+  - `node --check lib/capabilities.js` exit 0；`node tmp/test-units.mjs` → `38 passed`（回调后仍需全绿）。
+  - `node tmp/try-caps.mjs` 输出仍是四态对比（不再有 claimHave/unknown 折算）。
 - **怎么恢复**
-  - `lib/capabilities.js` 回到 13:20 版：删掉 `EVIDENCE`、`claimHave`、`effectiveState`、`applyAttempt`、`verifyQueue`，`pCap()` 里改回按 `cap.state` 直接取系数（`git show 7c965b2:lib/capabilities.js` 可对照）。
-  - 设计表第 5 页回到 13:20 版：`git checkout 7c965b2 -- planning/目标拆解与格-设计表.xlsx`。
-  - `tmp/try-evidence.mjs`、`tmp/try-evidence.out.txt`、`tmp/design5-dump2.txt` 删掉即可。
+  - 想捡回来：`git revert <本次回退提交的 hash>`，或直接 `git checkout 7981ab3 -- lib/capabilities.js planning/目标拆解与格-设计表.xlsx`。
+  - 只想要设计表那页：`git show 7981ab3:planning/目标拆解与格-设计表.xlsx` 导出后另存。
+  - 代码层面没有删任何外部依赖，`lib/units.js` 仍只 import `pCap` 与 `capGap`，回退不影响它。
