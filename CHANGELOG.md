@@ -3191,3 +3191,23 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 
 `git revert <本次提交>`；纯逻辑改动，无数据迁移。
+## 2026-11-15 14:16 验收句不再做语义判断
+
+**改了什么**
+
+- `lib/decompose.js`：删掉 `VAGUE_WORDS` 常量与 `vague-acceptance` 问题码；`validateGoal()` 对 `acceptance` 只校验非空，`no-acceptance` 的文案改成「怎么算做完，说一句你认的就行」。原常量位置留了注释备查。
+- `tmp/test-decompose.mjs`：把「模糊验收句会被拦」一条改成「验收句只看用户认不认，不做语义判断」（断言 `vague-acceptance` 为 0、problems 为空）。
+
+**为什么**
+
+原来用「掌握/了解/熟悉/学好/学会/搞懂/理解」七个词做子串匹配，会把「掌握 IoC，并能手写一个 @Autowired 的 demo 跑起来」这种合格句子也判成空话。用户 2026-11-15 14:14 的意见是：掌握不掌握由他自己肯定就行，系统没必要硬判语义。验收句归用户，系统只负责不让它空着。
+
+**怎么验证**
+
+- `node --check lib/decompose.js` exit 0。
+- `node tmp/test-decompose.mjs` 28 passed（其中断言 `acceptance: '掌握 Spring Boot'` 不再产生任何 problem）。
+- `node tmp/test-units.mjs` 38 passed、`node tmp/e2e-real.mjs` 9 passed（跑完删掉生成的 user-skill.json）。
+
+**怎么恢复**
+
+`git revert <本次提交>`，或把 `lib/decompose.js` 里那段注释换回 `const VAGUE_WORDS = [...]` 并在 `validateGoal` 的 `else` 分支恢复过滤逻辑。
