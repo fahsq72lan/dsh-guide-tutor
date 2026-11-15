@@ -16,6 +16,19 @@ import { createPlan } from './lib/plan.js'
 import { parsePlanText } from './lib/plan-parse.js'
 import { createJudge } from './lib/judge.js'
 import { askLabel } from './lib/l1.js'
+import { createGoals } from './lib/goals.js'
+import { createSkill } from './lib/skill.js'
+import {
+  STEP_STATUS,
+  GOAL_STATUS,
+  goalProgress,
+  progressLine,
+  availableSteps,
+  nextSteps as pickNextSteps,
+  toPlanItem,
+  validateGoal,
+  flattenGoals,
+} from './lib/decompose.js'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const NATIVE_DIR = path.join(HERE, 'native')
@@ -51,7 +64,7 @@ const DEFAULT_TOPBAR = { x: null, y: null, scale: 1 }
 const DEFAULT_SUBTITLE = { active: false, text: '', reveal: 0, seq: 0 }
 
 const TUTOR_PROMPT = `【屏幕教学】本环境装有"教学助手"：桌面悬浮球、全屏标注层和半透明步骤面板，由 guide_* 工具控制。\n- 当用户说"教我 / 带我操作 / 帮我做某件事"，或你收到【读屏请求】【语音】【完成确认】消息时，按此流程：guide_screen 截屏 → read_image 看图 → guide_teach 标注并在面板写一步提示。\n- 标注坐标与最近一次截图使用同一像素坐标（原点为虚拟桌面左上角，可直接用截图里的坐标）。\n- 一次只给一步；用户完成后重新截屏确认，再给下一步。多步骤任务把步骤列表放进 panel.steps，当前步放进 panel.stepIndex。\n- 面板文字要短（不超过 30 字），像教练在旁边轻声提示；解释放在聊天回复里。\n- 【收尾】任务达成、用户说"好了/完成了"，或你截屏看到目标已实现时，先 guide_screen 核验，再调用 guide_finish 结束：它会清空标注并把面板折叠回悬浮球。不要一直把标注和面板挂在屏幕上。\n- 【语音】用户可能用语音说话（消息以【语音】开头）：回应要口语化、简短，因为对方可能没在看屏幕。\n- 【面板对话】用户会从面板底部的输入框打字（消息以【面板对话】开头），这是"先沟通、再动手"的通道：新目标先确认理解、把计划写进 panel.steps 并等待用户点开始；回答问题时把短答案写进 panel.text；说"开始/下一步"时才截屏标注。\n- 【目标】确定教学任务后，用 guide_teach 的 goal 字段记录一句话目标（例如"在 Excel 里插入数据透视表"），这样面板和状态页都能显示当前任务。\n- 教学脚本可以存进 guide_kb（Markdown），下次直接读取复用。\n- 不确定屏幕内容时先截屏或直接问用户，不要臆测坐标。\n- 【下一步】用户点面板上的「下一步」＝这步做完了：先 guide_screen 截屏核验，再用 guide_teach 给出下一步标注，并把 panel.stepIndex 推进一格；已经是最后一步或目标达成，就用 guide_finish 收尾。\n- 【常听】面板和托盘都有「常听」开关：打开后每说完一句会自动再听，适合连续口述；用户说"关掉常听"时提醒他在面板或托盘取消勾选。\n- 【口播】每次回复用户前先调用 guide_say。这段是"说"出来给人听的，要像跟熟人聊天，但**总时长控制在 60 秒内**：当前语速约每秒 2.8 字，也就是 150–170 字、8–12 句，每句 ≤30 字。信息要密度高——正文的结论、原因、数字、下一步挑最要紧的塞进去，别用废话铺垫，也别只丢一句概括。可以有"嗯""你看""说实话"这类口头语，可以带情绪和判断，可以反问一句把话头递回去；只略过代码块、表格细节、文件路径。插件会逐句朗读并同步字幕，详细内容留在聊天里。
-- 【字幕】字幕自动出现在最近一次标注的旁边；没有标注时出现在屏幕底部中间。\n- 【都市指令】用户设了目标后（面板右上角「目标」窗口，写 goals.json），心跳会到点叫醒你发令：这时按消息里的三件事做——guide_directive action=issue 发令、guide_teach 贴面板、guide_say 念一句。收到【都市指令·催办】就问一句做了没，然后 action=close 记结果。用户主动喊"来条指令"也走同一套。别在没人叫的时候自己定时发。\n- 【专注环】用户说"拉我一下/提醒我专注/别走神"时，用 guide_focus start（默认 25 分钟一轮、每 8 分钟喊一次、90 分钟后自动结束）。它是纯本地闹钟：到点用 TTS 说话，不叫模型、不花 token；人离开电脑（键鼠空闲 5 分钟）或正在上课时自己跳过。用户说"停"就 stop。\n- 【桌面清单】目标可以排成当天的清单，用 guide_plan：add 加一条（from/to 用 HH:mm、place、title），show/hide 控制桌面卡片，done/undo 打勾，remove 划掉。早上 7:00–9:30 今天还没清单时心跳会叫你排一次；到点前 10 分钟提醒、过点 15 分钟追问一次，语气读 edict.json 的 tone。卡片是"伪融入桌面"的半透明清单（无边框+强半透明），不是真嵌进壁纸层，别承诺贴进桌面壁纸。\n- 【Word 知识库】guide_kb 支持 .md 与 .docx，名字可以带子目录（如「Linux/实验五.md」）：要 Word 版步骤就 save 一个 .docx 名字并给 content（Markdown 自动排版成标题/列表/表格）；导入已有 Word 用 source 指向绝对路径；read 一个 .docx 会返回抽取出的文本。\n- 【视频】用户给 B 站链接想“看懂/记住”时：先 video_learn 取字幕（分P用链接里的 ?p=N；没有字幕就说明要登录 Cookie，可用 video_cookie 保存 SESSDATA），长视频用 video_transcript 翻页读完，再用 video_note 写回摘要和要点；之后用 video_recall 回忆、video_show 看详情、video_list 看库存、video_forget 删记录。用户只知道想找什么、没有链接时，先用 video_search 按关键词搜，把结果列给他挑，再 video_learn。视频存在独立视频库，不和教学知识库混放。\n- 【改动日志】用户定了硬规矩：任何对文件的实际修改（代码、配置、文档、清理删除），都要在同一个回合里写进该项目的 CHANGELOG.md（没有就新建；不成项目时写 ~/.dsh/changes/YYYY-MM.md）。每条四段：改了什么（文件+行数或字节）、为什么、怎么验证（命令+结果）、删掉的东西怎么恢复。删文件、改依赖版本、改数据结构必须单独一行。规矩的来历与全文见 ~/.dsh/AGENTS.md。只写在聊天里不算数。`
+- 【字幕】字幕自动出现在最近一次标注的旁边；没有标注时出现在屏幕底部中间。\n- 【都市指令】用户设了目标后（面板右上角「目标」窗口，写 goals.json），心跳会到点叫醒你发令：这时按消息里的三件事做——guide_directive action=issue 发令、guide_teach 贴面板、guide_say 念一句。收到【都市指令·催办】就问一句做了没，然后 action=close 记结果。用户主动喊"来条指令"也走同一套。别在没人叫的时候自己定时发。\n- 【专注环】用户说"拉我一下/提醒我专注/别走神"时，用 guide_focus start（默认 25 分钟一轮、每 8 分钟喊一次、90 分钟后自动结束）。它是纯本地闹钟：到点用 TTS 说话，不叫模型、不花 token；人离开电脑（键鼠空闲 5 分钟）或正在上课时自己跳过。用户说"停"就 stop。\n- 【目标拆解】用户说"把这个目标拆一下""下一步做什么"时用 guide_goal：list 看目标与进度；add 建目标（必须追验收句，不能写"掌握/了解"）；decompose 把阶段步骤写回（先不带 apply 只看校验，过了再 apply=true）；next 拿今天该派的步骤；随后用 guide_plan add 时带上 stepId，勾完成会自动回写目标进度；skill 看各类历史成功率与能力牌。一步 = 一格 = 25–50 分钟 + 一个能拿出来的产物。\n- 【桌面清单】目标可以排成当天的清单，用 guide_plan：add 加一条（from/to 用 HH:mm、place、title），show/hide 控制桌面卡片，done/undo 打勾，remove 划掉。早上 7:00–9:30 今天还没清单时心跳会叫你排一次；到点前 10 分钟提醒、过点 15 分钟追问一次，语气读 edict.json 的 tone。卡片是"伪融入桌面"的半透明清单（无边框+强半透明），不是真嵌进壁纸层，别承诺贴进桌面壁纸。\n- 【Word 知识库】guide_kb 支持 .md 与 .docx，名字可以带子目录（如「Linux/实验五.md」）：要 Word 版步骤就 save 一个 .docx 名字并给 content（Markdown 自动排版成标题/列表/表格）；导入已有 Word 用 source 指向绝对路径；read 一个 .docx 会返回抽取出的文本。\n- 【视频】用户给 B 站链接想“看懂/记住”时：先 video_learn 取字幕（分P用链接里的 ?p=N；没有字幕就说明要登录 Cookie，可用 video_cookie 保存 SESSDATA），长视频用 video_transcript 翻页读完，再用 video_note 写回摘要和要点；之后用 video_recall 回忆、video_show 看详情、video_list 看库存、video_forget 删记录。用户只知道想找什么、没有链接时，先用 video_search 按关键词搜，把结果列给他挑，再 video_learn。视频存在独立视频库，不和教学知识库混放。\n- 【改动日志】用户定了硬规矩：任何对文件的实际修改（代码、配置、文档、清理删除），都要在同一个回合里写进该项目的 CHANGELOG.md（没有就新建；不成项目时写 ~/.dsh/changes/YYYY-MM.md）。每条四段：改了什么（文件+行数或字节）、为什么、怎么验证（命令+结果）、删掉的东西怎么恢复。删文件、改依赖版本、改数据结构必须单独一行。规矩的来历与全文见 ~/.dsh/AGENTS.md。只写在聊天里不算数。`
 
 export const inject = ['tools', 'systemPrompt', 'agents']
 
@@ -2418,28 +2431,41 @@ async function handleEvent(event) {
   // 「都市指令」：目标在悬浮面板的「目标」窗口里写（goals.json，不限条数），
   // 心跳到点把模型叫醒发一条指令，用户执行完回报，落进 directives.jsonl。
   // 只在真的发令/催办时叫模型，其余时间不动 token。
-  const goalsPath = path.join(dataDir, 'goals.json')
-
-  let goalsCache = { mtime: -1, list: [] }
+  const goals = createGoals({ dataDir, log })
+  const skill = createSkill({ dataDir, log })
+  const goalsPath = goals.file
 
   function readGoals() {
+    return goals.active()
+  }
+
+  // 目标看板以外，拆解状态只有这里能改：勾一步 → 记进 user-skill 的档。
+  function onGoalStepChange({ stepId, title, done, outcome = '' }) {
+    if (!stepId) return null
     try {
-      const stat = fs.statSync(goalsPath)
-      if (goalsCache.mtime === stat.mtimeMs) return goalsCache.list
-      const data = JSON.parse(fs.readFileSync(goalsPath, 'utf8'))
-      const raw = Array.isArray(data) ? data : Array.isArray(data?.goals) ? data.goals : []
-      const list = raw
-        .map((item, index) => ({
-          id: String(item?.id || `g${index + 1}`),
-          text: String(typeof item === 'string' ? item : item?.text ?? '').trim(),
-          status: String(item?.status || 'active'),
-        }))
-        .filter((item) => item.text && item.status === 'active')
-      goalsCache = { mtime: stat.mtimeMs, list }
-      return list
+      const next = done ? STEP_STATUS.DONE : STEP_STATUS.TODO
+      const result = goals.setStepStatus(stepId, next)
+      const goalId = stepId.split('-')[0]
+      const goal = goals.get(goalId)
+      const step = goal
+        ? goal.milestones.flatMap((m) => m.steps).find((s) => s.stepId === stepId)
+        : null
+      if (step) {
+        skill.record({
+          kind: step.kind,
+          outcome: done ? outcome || 'done' : 'partial',
+          plannedUnits: step.units,
+          actualUnits: step.units,
+        })
+      }
+      appendDaylog(
+        'activity',
+        `${done ? '完成' : '退回'}目标步骤：${title || stepId}（${result.step?.stepId || stepId}）`,
+      )
+      return result
     } catch (error) {
-      if (error?.code !== 'ENOENT') log(`goals read failed: ${error?.message ?? error}`)
-      return goalsCache.list
+      log(`goal step change failed: ${error?.message ?? error}`)
+      return null
     }
   }
 
@@ -2498,8 +2524,198 @@ async function handleEvent(event) {
     buildUserMessage,
     mutedSpeakMessages,
     speak: speakText,
+    onStepDone: onGoalStepChange,
   })
   const guidePlanTool = plan.tool
+
+  // 「目标拆解」：目标 → 阶段 → 步骤，「做完一步」直接反映到进度。
+  const guideGoalTool = {
+    name: 'guide_goal',
+    description:
+      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；decompose=把拆好的阶段步骤整块写回（milestones 数组）；validate=只看校验问题；next=今天该派哪几步（可直接拿去 guide_plan add，带上 stepId）；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          description: 'list / show / add / set / decompose / validate / next / done / undo / progress / skill / cap / remove',
+        },
+        id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
+        text: { type: 'string', description: 'add：目标一句话' },
+        acceptance: { type: 'string', description: 'add/set：验收句——怎么算做完，要能验证（不能写「掌握/了解」这类）' },
+        status: { type: 'string', description: 'set：active / done / paused' },
+        milestones: { type: 'string', description: 'decompose：阶段与步骤的 JSON 数组字符串' },
+        stepId: { type: 'string', description: 'done/undo：步骤 id，如 g1-m2-s1' },
+        limit: { type: 'number', description: 'next：最多派几步（默认 3）' },
+        maxUnits: { type: 'number', description: 'next：今天最多几格（默认 3）' },
+        cap: { type: 'string', description: 'cap：能力牌 id，如 java-basic' },
+        state: { type: 'string', description: 'cap：have / partial / lack / unknown' },
+        apply: { type: 'boolean', description: 'decompose：true 时校验通过就写盘，默认只返回校验结果' },
+      },
+    },
+    async execute(args = {}) {
+      const action = String(args.action || 'list');
+      const goalId = String(args.id || '').trim();
+
+      if (action === 'list') {
+        const list = goals.snapshot().map((g) => ({
+          id: g.id,
+          text: g.text,
+          status: g.status,
+          percent: g.progress.percent,
+          steps: `${g.progress.done}/${g.progress.total}`,
+          line: progressLine(g),
+        }));
+        return { ok: true, goals: list, count: list.length };
+      }
+
+      if (action === 'show' || action === 'progress') {
+        if (!goalId) return { ok: false, error: '要给 id，比如 g1' };
+        const goal = goals.get(goalId);
+        if (!goal) return { ok: false, error: `没有 ${goalId}` };
+        const progress = goalProgress(goal);
+        if (action === 'progress') return { ok: true, id: goal.id, line: progressLine(goal), progress };
+        return {
+          ok: true,
+          id: goal.id,
+          text: goal.text,
+          acceptance: goal.acceptance,
+          status: goal.status,
+          progress,
+          milestones: goal.milestones.map((m) => ({
+            id: m.id,
+            title: m.title,
+            status: m.status,
+            steps: m.steps.map((s) => ({
+              stepId: s.stepId,
+              title: s.title,
+              product: s.product,
+              check: s.check,
+              kind: s.kind,
+              units: s.units,
+              status: s.status,
+              dependsOn: s.dependsOn,
+            })),
+          })),
+        };
+      }
+
+      if (action === 'add') {
+        const text = String(args.text || '').trim();
+        if (!text) return { ok: false, error: '要给目标一句话（text）' };
+        const goal = goals.add({ text, acceptance: String(args.acceptance || '').trim() });
+        appendDaylog('note', `新建目标 ${goal.id}：${text}`);
+        return { ok: true, id: goal.id, needAcceptance: !goal.acceptance, suggestion: '接着把验收句和阶段拆出来' };
+      }
+
+      if (action === 'set') {
+        if (!goalId) return { ok: false, error: '要给 id' };
+        const patch = {};
+        if (args.acceptance !== undefined) patch.acceptance = String(args.acceptance || '').trim();
+        if (args.text !== undefined) patch.text = String(args.text || '').trim();
+        if (args.status !== undefined) {
+          if (!Object.values(GOAL_STATUS).includes(args.status)) return { ok: false, error: 'status 只能是 active/done/paused' };
+          patch.status = args.status;
+        }
+        const goal = goals.patch(goalId, patch);
+        return { ok: true, id: goal.id, acceptance: goal.acceptance, status: goal.status };
+      }
+
+      if (action === 'decompose' || action === 'validate') {
+        if (!goalId) return { ok: false, error: '要给 id' };
+        let milestones = args.milestones;
+        if (typeof milestones === 'string') {
+          try {
+            milestones = JSON.parse(milestones);
+          } catch (error) {
+            return { ok: false, error: `milestones 不是合法 JSON：${error?.message ?? error}` };
+          }
+        }
+        if (!Array.isArray(milestones)) return { ok: false, error: 'milestones 要是数组' };
+        const current = goals.get(goalId);
+        if (!current) return { ok: false, error: `没有 ${goalId}` };
+        const candidate = { ...current, milestones };
+        const problems = validateGoal(candidate);
+        if (action === 'validate') return { ok: problems.length === 0, problems, write: false };
+        if (problems.length) return { ok: false, problems, written: false };
+        if (args.apply !== true) {
+          return {
+            ok: true,
+            problems: [],
+            written: false,
+            hint: '校验通过；确认无误后带 apply=true 再调一次就写盘',
+            steps: flattenGoals([candidate]).length,
+          };
+        }
+        const goal = goals.setMilestones(goalId, milestones);
+        appendDaylog('note', `目标 ${goalId} 拆解写盘：${goal.milestones.length} 个阶段 / ${flattenGoals([goal]).length} 步`);
+        return { ok: true, written: true, id: goal.id, progress: goalProgress(goal) };
+      }
+
+      if (action === 'next') {
+        const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : 3;
+        const maxUnits = Number.isFinite(Number(args.maxUnits)) ? Number(args.maxUnits) : 3;
+        const picked = pickNextSteps(goals.active(), { limit, maxUnits });
+        const today = plan.forToday(new Date());
+        const taken = new Set((today.items || []).map((item) => item.stepId).filter(Boolean));
+        const items = picked
+          .filter(({ step }) => !taken.has(step.stepId))
+          .map(({ goal, milestone, step }) => ({
+            stepId: step.stepId,
+            goalId: goal.id,
+            milestoneId: milestone.id,
+            title: step.title,
+            units: step.units,
+            check: step.check,
+            addArgs: toPlanItem({ goal, milestone, step }),
+          }));
+        return {
+          ok: true,
+          count: items.length,
+          units: items.reduce((n, item) => n + item.units, 0),
+          items,
+          hint: items.length ? '挑一条，用 guide_plan add 带上 stepId 和 from/to' : '没有可派的步骤：目标都做完了、暂停了，或者还没拆',
+        };
+      }
+
+      if (action === 'done' || action === 'undo') {
+        const stepId = String(args.stepId || '').trim();
+        if (!stepId) return { ok: false, error: '要给 stepId，比如 g1-m2-s1' };
+        const result = onGoalStepChange({ stepId, title: '', done: action === 'done' });
+        if (!result) return { ok: false, error: `没有这一步：${stepId}` };
+        return { ok: true, step: result.step, goal: result.goal, progress: result.progress };
+      }
+
+      if (action === 'skill') {
+        const summary = skill.summary();
+        const next = availableSteps(goals.active()).slice(0, 3).map(({ step }) => step.stepId);
+        return { ok: true, ...summary, upcoming: next };
+      }
+
+      if (action === 'cap') {
+        const ref = String(args.cap || '').trim();
+        const state = String(args.state || '').trim();
+        if (!ref || !state) return { ok: false, error: '要给 cap 与 state' };
+        try {
+          skill.setCap(ref, state);
+        } catch (error) {
+          return { ok: false, error: error?.message ?? String(error) };
+        }
+        return { ok: true, cap: ref, state, skill: skill.summary() };
+      }
+
+      if (action === 'remove') {
+        if (!goalId) return { ok: false, error: '要给 id' };
+        const goal = goals.get(goalId);
+        if (!goal) return { ok: false, error: `没有 ${goalId}` };
+        goals.remove(goalId);
+        appendDaylog('note', `删掉目标 ${goalId}：${goal.text}`);
+        return { ok: true, removed: goalId, left: goals.read().length };
+      }
+
+      return { ok: false, error: `不认识的 action：${action}` };
+    },
+  }
   const planForToday = (now) => plan.forToday(now)
   const planRun = (args) => plan.run(args)
   const planTick = (now) => plan.tick(now)
@@ -3045,6 +3261,8 @@ async function handleEvent(event) {
   for (const tool of videoTools) ctx.effect(() => ctx.tools.register(tool))
   // 清单归 tutor（用户 2026-11-13 决定：清单在 guide，记录在 coach），始终注册。
   ctx.effect(() => ctx.tools.register(guidePlanTool))
+  // 目标拆解：目标 → 阶段 → 步骤，和清单/记录用 stepId 串起来。
+  ctx.effect(() => ctx.tools.register(guideGoalTool))
   if (manage) {
     ctx.effect(() => ctx.tools.register(guideClockTool))
     ctx.effect(() => ctx.tools.register(guideJournalTool))

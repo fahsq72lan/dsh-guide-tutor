@@ -3136,3 +3136,36 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
   - 想捡回来：`git revert <本次回退提交的 hash>`，或直接 `git checkout 7981ab3 -- lib/capabilities.js planning/目标拆解与格-设计表.xlsx`。
   - 只想要设计表那页：`git show 7981ab3:planning/目标拆解与格-设计表.xlsx` 导出后另存。
   - 代码层面没有删任何外部依赖，`lib/units.js` 仍只 import `pCap` 与 `capGap`，回退不影响它。
+
+## 2026-11-15 14:20 目标拆解落地：goals.json 长出阶段与步骤，stepId 打通清单与记录
+
+**改了什么**
+
+- 新增 `lib/decompose.js`（约 380 行）：`normalizeGoal` / `validateGoal`（14 种问题码：验收句缺失、「掌握/了解/熟悉/学好/学会/搞懂/理解」判无效、阶段过多、步骤缺产物、缺验法、units>3、依赖缺失、依赖成环等）/ `flattenGoals` / `availableSteps` / `nextSteps` / `toPlanItem` / `setStepStatus` / `recomputeProgress` / `goalProgress` / `progressLine`。
+- 新增 `lib/goals.js`（约 150 行）：goals.json 读写，兼容老的数组格式，写回统一成 `{updatedAt, goals}`；`add` / `setMilestones`（校验不过抛错且不写盘）/ `patch` / `remove` / `setStepStatus`。
+- 新增 `lib/skill.js`（约 120 行）：user-skill.json 读写；`record`（kinds 计数 + estimateBias EMA）、`setCap`（拒绝通用能力）、`seedFromKnowledge`、`summary`。
+- `index.js`：import 三个模块；建 `createGoals` / `createSkill` 实例；`readGoals()` 改为 `goals.active()`；新增 `onGoalStepChange`（勾/退回一步 → 写 goals + 记 skill + 写 daylog）；新增 `guide_goal` 工具（list/show/add/set/decompose/validate/next/done/undo/progress/skill/cap/remove）；`createPlan` 传 `onStepDone`；TUTOR_PROMPT 加【目标拆解】一段。
+- `lib/plan.js`：条目解析加 `milestoneId` / `stepId`；add 分支 push 带上；schema 加两个参数；`createPlan` 加 `onStepDone` 选项；`setPlanItemDone` 在勾/退回时回调（只有挂了 stepId 的条目才调）。
+- 新增测试：`tmp/test-decompose.mjs`（28 条断言，临时目录）、`tmp/smoke-real.mjs`（真实数据只读现状）、`tmp/e2e-real.mjs`（真实目录完整链路，跑完自动删测试目标）。
+
+**为什么**
+
+14 步链里标 ❌ 的四步（拆阶段、拆步、完成判定、进度回写）此前只有聊天里的设计，文件里一个字都没有。goals.json 只有两行名字，清单条目只有 title，记录段没有目标归属，导致「这个目标做到哪了」「这步花了多久」都答不了。
+
+**怎么验证**
+
+- `node --check` 对 index.js / lib/plan.js / lib/decompose.js / lib/goals.js / lib/skill.js 全部 exit 0。
+- `node tmp/test-decompose.mjs` → 28 passed（校验、派发、进度、读写、能力档、清单回调六组）。
+- `node tmp/e2e-real.mjs` → 9 passed：在真实 `~/.dsh/guide-tutor` 上建测试目标 g3 → 写两阶段步骤 → next 只派第一步 → 转清单条目 → 勾完成进度 50% → 第二步解锁 → 写能力牌 → 删 g3 → 核对 g1/g2 未被改动。
+- `node tmp/smoke-real.mjs` → 现状：g1/g2 各 2 个问题（no-acceptance、no-milestone），可派步骤 0。
+
+**怎么恢复**
+
+- 代码：`git revert <本次提交>`。
+- 数据：`tmp/goals.before-e2e.json` 是改动前原样（老数组格式），复制回 `C:\Users\易千纸\.dsh\guide-tutor\goals.json` 即可回退。
+- 测试产生的 `user-skill.json` 已删除，内容备份在 `tmp/user-skill.test-artifact.json`（只有测试数据，不是真实能力）。
+
+**删除与数据结构（单独记）**
+
+- 删除文件：`C:\Users\易千纸\.dsh\guide-tutor\user-skill.json`（本次测试生成；恢复方式：从 `tmp/user-skill.test-artifact.json` 复制回，或不管它——删了只是回到「没有能力档案」的初始态）。
+- 数据结构变更：`goals.json` 从 `[{id,text,status}]` 升级为 `{updatedAt, goals:[{id,text,acceptance,status,createdAt,milestones[]}]}`。旧文件仍可读（goals.js 兼容两种形状），但一写盘就升级。
