@@ -3071,3 +3071,25 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - `3-联动明细` 的「现状」列全部来自代码事实（如 `guide_plan add` 有 goalId 无 stepId、`pushHistory` 丢 goalId、记录模式按 match 分四态），不是推测。
 - 未改任何运行代码，插件行为不变。
 - **怎么恢复**：新建文件，直接删除 `planning/目标拆解与格-设计表.xlsx` 即可；生成脚本为临时文件 `%TEMP%/mkxlsx.py`，未入库。
+
+## 2026-11-15 13:05 设计表新增第 4 页：成功率模型的实现与细节（lib/units.js）
+
+- **改了什么**
+  - 新增 `lib/units.js`（约 250 行，ESM 纯函数、无 IO）：`pKnow / pSkill / pScale / pNovelty / plannedUnits / estimateUnits / verdictOf / estimateWin / recordOutcome / emptySkill` 等 12 个导出。公式 `p = p_know × p_skill × p_scale × p_novelty`，参数 `lambda 0.15 / hardBelow 0.55 / easyAbove 0.85`、Beta(2,1) 先验、`KIND_UNITS` 先验格数表。
+  - 新增 `tmp/test-units.mjs`（38 条断言，覆盖四个因子、区间边界、回写、入参不可变）。
+  - 新增 `tmp/try-units.mjs`（Spring Boot 6 步真实场景试算）与 `tmp/mk-design4.py`（写表页的生成脚本）。
+  - `planning/目标拆解与格-设计表.xlsx` 新增工作表 `4-实现与细节`（61 行 × 4 列，10 节：一句话 / 公式 / 四因子 / 参数表 / 首版翻车 / 修正后试算 / 回写 / 数据结构 / 代码与验证 / 还没定的）。原三页未动。
+- **为什么**
+  - 用户 m02145 问「分发任务的难度应该怎么计算判定」，m02151 要求「你试试，如果成功就把这个写道目标拆解表里，就说是那个部分的实现与细节」。设计表前三页只写了「要做什么」和「和哪些功能联动」，没有一处写「这套判定的数怎么算出来」，实现之前必须先证明公式跑得通。
+  - 首版跑出来 **6 个任务全判「太难」**（装 JDK 56%、quickstart 21%、讲清 IoC 31%、配 datasource 11%、写 CRUD 0%、设计模块 0%），一眼不对。查下来是五处参数问题：熟练度按「信息类型」而不是「产物类型」统计、Beta(1,1) 先验把整体压掉一档、新异度下限 0.75 罚太狠、规模惩罚重复乘了估时偏差、门槛 0.60 偏高。改完后 s1 75%、s3 57% 落在合适区间，s2/s4/s5/s6 仍判太难但各自指向不同缺项（缺 maven / 缺 sql-basic / 没学 IoC），这才是能执行的分发建议。
+  - 把「首版翻车」如实写进表里，是因为这五条不是调参手感，而是模型的结构性错误；下次别人照着做会踩同样的坑。
+- **怎么验证**
+  - `node --check lib/units.js` → 退出码 0。
+  - `node tmp/test-units.mjs` → `38 passed`。
+  - `node tmp/try-units.mjs` → 6 步判定分层：s1 75% 合适、s2 32% 太难、s3 57% 合适、s4 14% 太难、s5/s6 0% 太难；回写演示 75% → 67%（stuck）→ 60%（partial）→ 64%（done）。
+  - `openpyxl.load_workbook` 读回：4 个工作表，`4-实现与细节` 61×4；导出全表文字到 `tmp/design4-dump.txt` 逐行核对，无空行、无错位（表头「因子/算法/为什么这么定」与数据行对齐）。
+- **怎么恢复**
+  - 删 `lib/units.js`、`tmp/test-units.mjs`、`tmp/try-units.mjs`、`tmp/mk-design4.py` 四个文件（新增文件，无覆盖风险）。
+  - 表格只删工作表 `4-实现与细节` 即回到三页版本；`git checkout HEAD -- planning/目标拆解与格-设计表.xlsx` 可整表回退到 `0dc0319`。
+  - `tmp/` 按 `.gitignore` 第 2 行约定不入库，`test-units.mjs` / `try-units.mjs` / `mk-design4.py` 只在本机；入库的是 `lib/units.js`、`CHANGELOG.md` 与表页。
+  - 参数若要回退到首版：`hardBelow` 0.60、`pSkill` 先验 Beta(1,1)、`pNovelty` 下限 0.75、`pScale` 用 `estimateUnits()`——不推荐，首版 6/6 全判太难。
