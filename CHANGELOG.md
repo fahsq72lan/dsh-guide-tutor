@@ -3469,3 +3469,23 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 代码：`git revert` 本次提交。
 - 数据：把 `~/.dsh/guide-tutor` 里 speech 设置文件的 `dispatchUnits` 删掉（或点「按空档自动」），就回到按空档算。
 - 已排进清单的条目点「派发 → 重新排」会整批重排，不会留下旧条目。
+
+## 2026-11-15 16:42 修「重排后会重复提醒」
+
+**改了什么**
+
+- `lib/plan.js`：`createPlan()` 内加 `const remindedKeys = new Set()`；`planTick()` 的 `toRemind` 判断从「`item.remindedAt` 为空 + 落在 `from-10 ~ from+2`」改成再查一次 `remindedKeys`（键是 `${plan.date}|${item.from}|${item.title}`），命中就跳过；真的提醒时把键写进集合，集合超过 800 条自动清空。
+
+**为什么**
+
+点「派发 → 重新排」时，`clearAutoSteps()` 会把今天没做的条目删掉重排，新条目的 `remindedAt` 是 `null`，于是同一条目又落回提醒窗口，被连续提醒三次（16:38、16:39、16:40 各一次）。加 `remindedAt` 也不能解决跨进程重启的情况，所以用「日期 + 开始时间 + 标题」做键来认「这条已经提醒过了」。
+
+**怎么验证**
+
+- `node --check lib/plan.js` exit 0。
+- 回归：`test-units` 38、`test-decompose` 28、`test-chores` 37、`test-nested` 16、`e2e-real` 9 全过（五个脚本退出码均 0）。
+- 行为：同一条重排后（标题与开始时间不变）不再触发第二次提醒；改变了开始时间或标题的条目会正常提醒。
+
+**怎么恢复**
+
+`git revert` 本次提交。副作用是回到「重排后可能重复提醒一次」的旧行为，不影响数据。
