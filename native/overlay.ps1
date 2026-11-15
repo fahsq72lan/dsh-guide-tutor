@@ -2335,74 +2335,49 @@ function Show-DispatchWindow {
     [void]$valueRow.Children.Add($valueSub)
     [void]$stack.Children.Add($valueRow)
 
-    $slider = [System.Windows.Controls.Slider]::new()
-    $slider.Minimum = 1
-    $slider.Maximum = 16
-    $slider.Value = $current
-    $slider.TickFrequency = 1
-    $slider.IsSnapToTickEnabled = $true
-    $slider.IsMoveToPointEnabled = $true
-    $slider.Margin = [System.Windows.Thickness]::new(0, 8, 0, 14)
-    $script:DispatchSlider = $slider
-    $slider.Add_ValueChanged({
-            param($s, $e)
-            $v = [int]$s.Value
-            $valueText.Text = ('{0} 格' -f $v)
-            $valueSub.Text = ('  ≈ {0} 小时' -f ([math]::Round($v * 30 / 60, 1)))
-        })
-    [void]$stack.Children.Add($slider)
+    # 预设格数：滑块在这台机器上拖不动、± 也点不灵，干脆换成一组按钮。
+    # 每个按钮点下去直接发 dispatch_goals，不再依赖滑块状态。
+    $presetRow = [System.Windows.Controls.WrapPanel]::new()
+    $presetRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $presetRow.Margin = [System.Windows.Thickness]::new(0, 4, 0, 12)
 
-    # 滑块拖不动时的备用按钮：点一下加一格/减一格，一定点得中。
-    $stepRow = [System.Windows.Controls.StackPanel]::new()
-    $stepRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
-    $stepRow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
-    $stepRow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 12)
-
-    $minus = [System.Windows.Controls.Border]::new()
-    $minus.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 50, 62))
-    $minus.CornerRadius = [System.Windows.CornerRadius]::new(6)
-    $minus.Padding = [System.Windows.Thickness]::new(14, 2, 14, 2)
-    $minus.Cursor = [System.Windows.Input.Cursors]::Hand
-    $minusText = [System.Windows.Controls.TextBlock]::new()
-    $minusText.Text = '−'
-    $minusText.FontSize = 15
-    $minusText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 226, 234, 245))
-    $minus.Child = $minusText
-    $minus.Add_PreviewMouseLeftButtonDown({
-            param($s, $e)
-            $e.Handled = $true
-            try {
-                $sl = $script:DispatchSlider
-                if ($null -ne $sl -and $sl.Value -gt $sl.Minimum) { $sl.Value = $sl.Value - 1 }
-            } catch { }
-        })
-    [void]$stepRow.Children.Add($minus)
-
-    $gap = [System.Windows.Controls.TextBlock]::new()
-    $gap.Text = '   '
-    $gap.FontSize = 10
-    [void]$stepRow.Children.Add($gap)
-
-    $plus = [System.Windows.Controls.Border]::new()
-    $plus.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 112, 230))
-    $plus.CornerRadius = [System.Windows.CornerRadius]::new(6)
-    $plus.Padding = [System.Windows.Thickness]::new(14, 2, 14, 2)
-    $plus.Cursor = [System.Windows.Input.Cursors]::Hand
-    $plusText = [System.Windows.Controls.TextBlock]::new()
-    $plusText.Text = '＋'
-    $plusText.FontSize = 15
-    $plusText.Foreground = [System.Windows.Media.Brushes]::White
-    $plus.Child = $plusText
-    $plus.Add_PreviewMouseLeftButtonDown({
-            param($s, $e)
-            $e.Handled = $true
-            try {
-                $sl = $script:DispatchSlider
-                if ($null -ne $sl -and $sl.Value -lt $sl.Maximum) { $sl.Value = $sl.Value + 1 }
-            } catch { }
-        })
-    [void]$stepRow.Children.Add($plus)
-    [void]$stack.Children.Add($stepRow)
+    foreach ($preset in @(4, 6, 8, 10, 12, 14)) {
+        $pb = [System.Windows.Controls.Border]::new()
+        $isCurrent = ($preset -eq $current)
+        $pb.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 50, 62))
+        if ($isCurrent) {
+            $pb.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 112, 230))
+        }
+        $pb.CornerRadius = [System.Windows.CornerRadius]::new(8)
+        $pb.Padding = [System.Windows.Thickness]::new(12, 6, 12, 6)
+        $pb.Margin = [System.Windows.Thickness]::new(0, 0, 6, 6)
+        $pb.Cursor = [System.Windows.Input.Cursors]::Hand
+        $pbt = [System.Windows.Controls.TextBlock]::new()
+        $pbt.Text = ('{0} 格' -f $preset)
+        $pbt.FontSize = 11.5
+        if ($isCurrent) {
+            $pbt.Foreground = [System.Windows.Media.Brushes]::White
+        } else {
+            $pbt.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(220, 226, 234, 245))
+        }
+        $pb.Child = $pbt
+        $pb.Tag = $preset
+        $pb.Add_PreviewMouseLeftButtonDown({
+                param($s, $e)
+                $e.Handled = $true
+                $u = 0
+                try { $u = [int]$s.Tag } catch { $u = 0 }
+                try {
+                    Send-OverlayEvent @{ type = 'dispatch_goals'; units = $u }
+                    Write-Log ('dispatch preset clicked: ' + $u)
+                } catch {
+                    Write-Log ('dispatch preset failed: ' + $_.Exception.Message)
+                }
+                try { if ($null -ne $script:DispatchWindow) { $script:DispatchWindow.Close() } } catch { }
+            })
+        [void]$presetRow.Children.Add($pb)
+    }
+    [void]$stack.Children.Add($presetRow)
 
     $btnRow = [System.Windows.Controls.StackPanel]::new()
     $btnRow.Orientation = [System.Windows.Controls.Orientation]::Horizontal
@@ -2427,27 +2402,22 @@ function Show-DispatchWindow {
         })
     [void]$btnRow.Children.Add($autoBtn)
 
-    $applyBtn = [System.Windows.Controls.Border]::new()
-    $applyBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 112, 230))
-    $applyBtn.CornerRadius = [System.Windows.CornerRadius]::new(8)
-    $applyBtn.Padding = [System.Windows.Thickness]::new(16, 7, 16, 7)
-    $applyBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $applyText = [System.Windows.Controls.TextBlock]::new()
-    $applyText.Text = '重新排'
-    $applyText.FontSize = 11.5
-    $applyText.FontWeight = [System.Windows.FontWeights]::SemiBold
-    $applyText.Foreground = [System.Windows.Media.Brushes]::White
-    $applyBtn.Child = $applyText
-    $applyBtn.Add_PreviewMouseLeftButtonDown({
+    $closeBtn = [System.Windows.Controls.Border]::new()
+    $closeBtn.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 44, 50, 62))
+    $closeBtn.CornerRadius = [System.Windows.CornerRadius]::new(8)
+    $closeBtn.Padding = [System.Windows.Thickness]::new(16, 7, 16, 7)
+    $closeBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $closeText = [System.Windows.Controls.TextBlock]::new()
+    $closeText.Text = '关闭'
+    $closeText.FontSize = 11.5
+    $closeText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(220, 226, 234, 245))
+    $closeBtn.Child = $closeText
+    $closeBtn.Add_PreviewMouseLeftButtonDown({
             param($s, $e)
             $e.Handled = $true
-            $v = 0
-            try { $v = [int]$script:DispatchSlider.Value } catch { $v = 0 }
-            if ($v -lt 1) { $v = 6 }
-            Send-OverlayEvent @{ type = 'dispatch_goals'; units = $v }
             try { if ($null -ne $script:DispatchWindow) { $script:DispatchWindow.Close() } } catch { }
         })
-    [void]$btnRow.Children.Add($applyBtn)
+    [void]$btnRow.Children.Add($closeBtn)
     [void]$stack.Children.Add($btnRow)
 
     $win.Add_Closed({ $script:DispatchWindow = $null })

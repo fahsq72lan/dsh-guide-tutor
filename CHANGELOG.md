@@ -3513,3 +3513,28 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 
 `git revert` 本次提交，回到「窗口任意位置可拖动、滑块拖不动」的旧行为。
+
+## 2026-11-15 16:53 派发窗口换成预设格数按钮（滑块与 ± 点不动）
+
+**改了什么**
+
+- `native/overlay.ps1` 的 `Show-DispatchWindow`：
+  - 删掉 Slider 和「−」「＋」两个按钮，换成一排预设：「4 格 / 6 格 / 8 格 / 10 格 / 12 格 / 14 格」，当前值高亮成蓝色。
+  - 每个预设按钮把格数存进控件自带的 `Tag`，事件处理里用 `[int]$s.Tag` 读，不再依赖循环变量闭包。
+  - 点预设 = 立刻发 `dispatch_goals` 并按该格数重排，随即关窗。
+  - 底部只留「按空档自动」和「关闭」；「重新排」删掉（预设按钮本身就是重排）。
+  - 窗口拖动仍然只绑在标题上。
+
+**为什么**
+
+用户反馈「点的加号减号没用」。查 `overlay.log` 发现 handler 确实执行了（`dispatch preset clicked:`），但格数是空的 —— PowerShell 的 scriptblock 在函数返回后拿不到循环里的 `$unitsVar`，`[int]$null` 就是 0，于是每次都按「自动」重排。同理「重新排」读 `$script:DispatchSlider.Value` 也一直是 `$null`，靠 fallback 才发成 6。用控件 `Tag` 传值可以彻底绕开闭包生命周期问题。
+
+**怎么验证**
+
+- `[Parser]::ParseInput` 0 错误；BOM 仍 `239,187,191`。
+- 点「8 格」→ `overlay.log`：`dispatch preset clicked: 8`；`plugin.log`：`dispatch goals: units=8 removed=5 added=6`；`state.json` 的 `dispatchUnits=8`。
+- 清单按 8 格重排成 6 条（合计 8 格）：17:00 Temurin（1）、17:40 JAVA_HOME（1）、18:20 IDEA 选 JDK（1）、20:00 建工程（2）、21:10 写 Controller（1）、21:50 说清 IoC（2）。
+
+**怎么恢复**
+
+`git revert` 本次提交，回到滑块版本（滑块在这台机器上拖不动，不建议回退）。
