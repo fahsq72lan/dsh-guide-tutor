@@ -1914,6 +1914,8 @@ function Rebuild-GoalsPanel {
             }
             $script:GoalsData = $keep
             if (Save-GoalsData) { Rebuild-GoalsPanel }
+            # 目标删了，清单里属于它的条目也该走：交给宿主去撤。
+            Send-OverlayEvent @{ type = 'goal_removed'; goalId = [string]$goal.id }
         })
 
         $ops = [System.Windows.Controls.StackPanel]::new()

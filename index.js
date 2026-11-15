@@ -746,6 +746,15 @@ async function handleEvent(event) {
         log(`chore done from overlay: ${id}`)
         break
       }
+      case 'goal_removed': {
+        // 目标看板上删了目标：把今天清单里属于它的条目一起撤掉。
+        const gid = String(event.goalId || '').trim()
+        if (!gid) break
+        const cleared = dropGoalItems(gid)
+        appendDaylog('activity', `删目标 ${gid}：清单里撤了 ${cleared.length} 条`)
+        log(`goal removed from overlay: ${gid}, cleared ${cleared.length}`)
+        break
+      }
       case 'dispatch_goals': {
         // 清单卡上的「派发」按钮：定今天派几格，撤掉没做的、按新数重排。
         const units = Math.round(Number(event.units))
@@ -3376,9 +3385,13 @@ async function handleEvent(event) {
         if (!goalId) return { ok: false, error: '要给 id' };
         const goal = goals.get(goalId);
         if (!goal) return { ok: false, error: `没有 ${goalId}` };
+        const cleared = dropGoalItems(goalId);
         goals.remove(goalId);
-        appendDaylog('note', `删掉目标 ${goalId}：${goal.text}`);
-        return { ok: true, removed: goalId, left: goals.read().length };
+        appendDaylog(
+          'note',
+          `删掉目标 ${goalId}：${goal.text}${cleared.length ? `（清单里撤了 ${cleared.length} 条）` : ''}`,
+        );
+        return { ok: true, removed: goalId, left: goals.read().length, cleared };
       }
 
       return { ok: false, error: `不认识的 action：${action}` };
@@ -3391,6 +3404,26 @@ async function handleEvent(event) {
   const pushPlanState = (value) => plan.push(value)
   const setPlanItemDone = (id, done) => plan.setDone(id, done)
   const planHistoryData = (days) => plan.history(days)
+
+  // 删目标时把清单里属于它的条目一起撤掉：按 goalId 或 stepId 前缀（g1-…）认。
+  function dropGoalItems(goalId) {
+    const gid = String(goalId || '').trim()
+    if (!gid) return []
+    const today = plan.forToday()
+    const hit = (today.items || []).filter(
+      (item) => String(item.goalId || '') === gid || String(item.stepId || '').startsWith(`${gid}-`),
+    )
+    const cleared = []
+    for (const item of hit) {
+      try {
+        plan.run({ action: 'remove', id: item.id, note: '目标已删' })
+        cleared.push(item.title)
+      } catch (error) {
+        log(`drop goal item failed: ${error?.message ?? error}`)
+      }
+    }
+    return cleared
+  }
 
   const chatLogPath = path.join(dataDir, 'chatlog.json')
   let chatLog = []

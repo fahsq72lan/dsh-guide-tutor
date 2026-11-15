@@ -3538,3 +3538,31 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 
 `git revert` 本次提交，回到滑块版本（滑块在这台机器上拖不动，不建议回退）。
+
+## 2026-11-15 17:00 删目标时清单里的条目一起消失（附：goals.json 被覆盖的事故与写盘保护）
+
+**改了什么**
+- `index.js`：新增 `dropGoalItems(goalId)`（在 `planHistoryData` 之后约 20 行），按 `item.goalId === gid` 或 `item.stepId.startsWith(gid + '-')` 挑条目，逐条 `plan.run({action:'remove', id, note:'目标已删'})`，返回被撤标题数组；`guide_goal` 的 `remove` 分支改为先 `dropGoalItems` 再 `goals.remove`，daylog 与返回值带上 `cleared`；overlay 事件新增 `case 'goal_removed'`（插在 `dispatch_goals` 之前）。
+- `native/overlay.ps1`：目标卡 ✕ 的 handler（约 L1915，`Save-GoalsData` 之后）加 4 行「`Send-OverlayEvent @{ type = 'goal_removed'; goalId = [string]$goal.id }`」。
+- `lib/goals.js`：新增 `let broken = false`；`readRaw()` 遇到非 ENOENT 的异常时把坏文件另存 `goals.broken-<ts>.json`、置 `broken = true`；`save()` 开头 `if (broken) throw`，杜绝「读空 → 写空」。
+
+**为什么**
+- 用户 m04671：「在我删除目标时，其在清单上的任务也应该消失」。
+- 做这个需求时用 `guide_goal add` 造测试目标，`goals.json` 被整份覆盖，原有 g1/g2 连同 4 阶段 8 步 / 3 阶段 6 步全部丢失（见下条「数据事故」）。
+
+**怎么验证**
+- `tmp/test-goals-guard.mjs`：正常 add → `['A']`；把文件写成坏 JSON 再 add → 抛错、文件字节未变、目录里多一个 `goals.broken-*`。4 项全过。
+- 真实数据：`guide_goal add` 造 g3 → `guide_plan add` 加一条 `stepId=g3-m1-s1` 的条目 → `guide_goal remove id=g3` → `plan.json` 里该条目消失，`goals.json` 剩 g1(4 段)/g2(3 段)。
+- `node --check index.js`、`node --check lib/goals.js` 均 exit 0；`overlay.ps1` `[Parser]::ParseInput` 0 错误、BOM 仍是 239,187,191；热重载后 `plugin.log` 出现 `guide-tutor ready` + `overlay ready (pid 46312)`。
+
+**怎么恢复**
+- 代码：`git revert <本次 commit>`。
+- 数据：`goals.json` 已从 `D:\dsh_TestSpace\guide-tutor\tmp\goals.before-check.json`（14:39 备份，9503 字节）恢复。
+
+**数据事故（不可忽略）**
+- 时间：2026-11-15 16:57 前后。
+- 现象：`C:\Users\易千纸\.dsh\guide-tutor\goals.json` 被整份覆盖，只剩一条 `【测试】删除目标时清单要清干净`；原有 g1（Spring Boot）/g2（Python）及全部阶段步骤丢失。
+- 原因（初判）：`lib/goals.js` 的 `readRaw()` 在 JSON 解析或规范化抛错时静默返回空数组，紧接着 `add()` 用这个空数组 `save()`，整份覆盖。
+- 已恢复：从 `tmp/goals.before-check.json` 写回 g1(4 阶段 8 步)、g2(3 阶段 6 步)，`updatedAt` 刷新为恢复时刻。
+- 仍缺：15:28 把 `g1-m1-s1`「装 JDK 17 并确认版本」拆成的 3 个子步（下载 Temurin 17 / 配 JAVA_HOME 与 Path / IDEA 里选中 JDK）不在这份备份里，需要重新拆；其余内容与 14:39 一致。
+- 原始被覆盖前的文件没有单独留档（被 `guide_goal add` 直接 writeFile），这是这次最该避免的地方。
