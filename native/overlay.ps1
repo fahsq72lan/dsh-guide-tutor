@@ -1306,60 +1306,93 @@ function Get-StepDone($s) {
     return $false
 }
 
+# 一个步骤子树里有多少叶子、几个做完了（组步自己不算）。
+function Count-Leaves($step) {
+    $kids = @()
+    if ($null -ne $step.children) { $kids = @($step.children) }
+    if ($kids.Count -eq 0) {
+        $d = 0
+        if (Get-StepDone $step) { $d = 1 }
+        return @{ done = $d; total = 1 }
+    }
+    $d = 0
+    $t = 0
+    foreach ($k in $kids) {
+        $r = Count-Leaves $k
+        $d += [int]$r.done
+        $t += [int]$r.total
+    }
+    return @{ done = $d; total = $t }
+}
+
+# 递归把「一步及其子步骤」压成行；path 是定位用的索引链，如 0.1.2。
+function Add-StepRows($out, $steps, $mIdx, $prefix, $level) {
+    $si = -1
+    foreach ($s in @($steps)) {
+        $si++
+        if ($null -eq $s) { continue }
+        $kids = @()
+        if ($null -ne $s.children) { $kids = @($s.children) }
+        $path = ('{0}.{1}' -f $prefix, $si)
+        $gd = 0
+        $gt = 0
+        if ($kids.Count -gt 0) {
+            $lk = Count-Leaves $s
+            $gd = [int]$lk.done
+            $gt = [int]$lk.total
+        }
+        $out.Add([pscustomobject]@{
+            kind = 'step'; m = $mIdx; s = $si; path = $path; level = $level
+            title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0
+            groupDone = $gd; groupTotal = $gt; check = (Get-StepCheck $s)
+        }) | Out-Null
+        if ($kids.Count -gt 0) { Add-StepRows $out $kids $mIdx $path ($level + 1) }
+    }
+}
+
 # 把一个目标摊成「阶段行 + 步骤行」，界面按这个顺序画。
 function Get-GoalRows($Goal) {
-    $rows = @()
+    $out = [System.Collections.ArrayList]::new()
     $ms = @()
     if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
-    if ($ms.Count -gt 0) {
-        $mi = -1
-        foreach ($m in $ms) {
-            $mi++
-            if ($null -eq $m) { continue }
-            $mTitle = ''
-            if ($null -ne $m.title) { $mTitle = [string]$m.title }
-            elseif ($null -ne $m.text) { $mTitle = [string]$m.text }
-            $steps = @()
-            if ($null -ne $m.steps) { $steps = @($m.steps) }
-            $doneN = 0
-            foreach ($s in $steps) { if (Get-StepDone $s) { $doneN++ } }
-            $rows += [pscustomobject]@{ kind = 'milestone'; m = $mi; s = -1; title = $mTitle; done = $doneN; total = $steps.Count; check = '' }
-            $si = -1
-            foreach ($s in $steps) {
-                $si++
-                $rows += [pscustomobject]@{ kind = 'step'; m = $mi; s = $si; title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0; check = (Get-StepCheck $s) }
-            }
+    $mi = -1
+    foreach ($m in $ms) {
+        $mi++
+        if ($null -eq $m) { continue }
+        $mTitle = ''
+        if ($null -ne $m.title) { $mTitle = [string]$m.title }
+        elseif ($null -ne $m.text) { $mTitle = [string]$m.text }
+        $steps = @()
+        if ($null -ne $m.steps) { $steps = @($m.steps) }
+        $d = 0
+        $t = 0
+        foreach ($s in $steps) {
+            $r = Count-Leaves $s
+            $d += [int]$r.done
+            $t += [int]$r.total
         }
+        $out.Add([pscustomobject]@{ kind = 'milestone'; m = $mi; s = -1; path = ''; level = 0; title = $mTitle; done = $d; total = $t; groupDone = 0; groupTotal = 0; check = '' }) | Out-Null
+        if ($steps.Count -gt 0) { Add-StepRows $out $steps $mi ([string]$mi) 1 }
     }
     $top = @()
     if ($null -ne $Goal.steps) { $top = @($Goal.steps) }
     if ($top.Count -gt 0) {
-        $doneN = 0
-        foreach ($s in $top) { if (Get-StepDone $s) { $doneN++ } }
-        if ($ms.Count -gt 0) {
-            $rows += [pscustomobject]@{ kind = 'milestone'; m = -1; s = -1; title = '其他步骤'; done = $doneN; total = $top.Count; check = '' }
-        }
-        $si = -1
+        $d = 0
+        $t = 0
         foreach ($s in $top) {
-            $si++
-            $rows += [pscustomobject]@{ kind = 'step'; m = -1; s = $si; title = (Get-StepTitle $s); done = (Get-StepDone $s); total = 0; check = (Get-StepCheck $s) }
+            $r = Count-Leaves $s
+            $d += [int]$r.done
+            $t += [int]$r.total
         }
+        if ($ms.Count -gt 0) {
+            $out.Add([pscustomobject]@{ kind = 'milestone'; m = -1; s = -1; path = ''; level = 0; title = '其他步骤'; done = $d; total = $t; groupDone = 0; groupTotal = 0; check = '' }) | Out-Null
+        }
+        Add-StepRows $out $top -1 'top' 1
     }
-    return @($rows)
+    return @($out)
 }
 
-function Set-StepDone($Goal, $mIdx, $sIdx, $done) {
-    if ($mIdx -ge 0) {
-        $ms = @($Goal.milestones)
-        if ($mIdx -ge $ms.Count) { return }
-        $steps = @($ms[$mIdx].steps)
-        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
-        $st = $steps[$sIdx]
-    } else {
-        $steps = @($Goal.steps)
-        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
-        $st = $steps[$sIdx]
-    }
+function Mark-StepDone($st, $done) {
     if ($null -eq $st -or $st -is [string]) { return }
     $nowIso = (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz')
     $st | Add-Member -NotePropertyName status -NotePropertyValue ($(if ($done) { 'done' } else { 'todo' })) -Force
@@ -1367,22 +1400,126 @@ function Set-StepDone($Goal, $mIdx, $sIdx, $done) {
     $st | Add-Member -NotePropertyName done -NotePropertyValue $done -Force
 }
 
-function Remove-GoalStep($Goal, $mIdx, $sIdx) {
-    if ($mIdx -ge 0) {
-        $ms = @($Goal.milestones)
-        if ($mIdx -ge $ms.Count) { return }
-        $steps = @($ms[$mIdx].steps)
-        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
-        $new = @()
-        for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $sIdx) { $new += $steps[$k] } }
-        $ms[$mIdx].steps = $new
-    } else {
-        $steps = @($Goal.steps)
-        if ($sIdx -lt 0 -or $sIdx -ge $steps.Count) { return }
-        $new = @()
-        for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $sIdx) { $new += $steps[$k] } }
-        $Goal.steps = $new
+function Set-StepCascade($st, $done) {
+    Mark-StepDone $st $done
+    $kids = @()
+    if ($null -ne $st.children) { $kids = @($st.children) }
+    foreach ($k in $kids) { Set-StepCascade $k $done }
+}
+
+# 子步骤是不是全做完了；是就把这个组步也标成做完，否则退回。
+function Sync-BranchStatus($node) {
+    $kids = @()
+    if ($null -ne $node.children) { $kids = @($node.children) }
+    if ($kids.Count -eq 0) { return }
+    $allDone = $true
+    foreach ($k in $kids) {
+        if (-not (Get-StepDone $k)) { $allDone = $false; break }
     }
+    if ($allDone -and -not (Get-StepDone $node)) { Mark-StepDone $node $true }
+    elseif (-not $allDone -and (Get-StepDone $node)) { Mark-StepDone $node $false }
+}
+
+function Get-StepAncestors($Goal, $path) {
+    $segs = @([string]$path).Split('.') | Where-Object { $_ -ne '' }
+    $anc = @()
+    if ($segs.Count -le 2) { return @($anc) }
+    if ($segs[0] -eq 'top') {
+        $steps = @($Goal.steps)
+        $cur = $steps[[int]$segs[1]]
+    } else {
+        $ms = @()
+        if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
+        $mi = [int]$segs[0]
+        if ($mi -lt 0 -or $mi -ge $ms.Count) { return @($anc) }
+        $steps = @($ms[$mi].steps)
+        $si = [int]$segs[1]
+        if ($si -lt 0 -or $si -ge $steps.Count) { return @($anc) }
+        $cur = $steps[$si]
+    }
+    for ($i = 2; $i -lt $segs.Count; $i++) {
+        $anc += ,$cur
+        $kids = @()
+        if ($null -ne $cur.children) { $kids = @($cur.children) }
+        $cur = $kids[[int]$segs[$i]]
+    }
+    return @($anc)
+}
+
+# 按 path（0.1.2）定位一步并改状态；勾组步会级联子步，子步全完时祖先自动勾上。
+function Set-StepDoneAt($Goal, $path, $done) {
+    $segs = @([string]$path).Split('.') | Where-Object { $_ -ne '' }
+    if ($segs.Count -lt 2) { return }
+    if ($segs[0] -eq 'top') {
+        $steps = @($Goal.steps)
+        $si = [int]$segs[1]
+        if ($si -lt 0 -or $si -ge $steps.Count) { return }
+        $cur = $steps[$si]
+    } else {
+        $ms = @()
+        if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
+        $mi = [int]$segs[0]
+        if ($mi -lt 0 -or $mi -ge $ms.Count) { return }
+        $steps = @($ms[$mi].steps)
+        $si = [int]$segs[1]
+        if ($si -lt 0 -or $si -ge $steps.Count) { return }
+        $cur = $steps[$si]
+    }
+    $anc = @(Get-StepAncestors $Goal $path)
+    for ($i = 2; $i -lt $segs.Count; $i++) {
+        $kids = @()
+        if ($null -ne $cur.children) { $kids = @($cur.children) }
+        $idx = [int]$segs[$i]
+        if ($idx -lt 0 -or $idx -ge $kids.Count) { return }
+        $cur = $kids[$idx]
+    }
+    Set-StepCascade $cur $done
+    for ($i = $anc.Count - 1; $i -ge 0; $i--) { Sync-BranchStatus $anc[$i] }
+}
+
+function Remove-GoalStepAt($Goal, $path) {
+    $segs = @([string]$path).Split('.') | Where-Object { $_ -ne '' }
+    if ($segs.Count -lt 2) { return }
+    if ($segs[0] -eq 'top') {
+        $steps = @($Goal.steps)
+        $si = [int]$segs[1]
+        if ($segs.Count -eq 2) {
+            $new = @()
+            for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $si) { $new += $steps[$k] } }
+            $Goal.steps = $new
+            return
+        }
+        $parent = $steps[$si]
+    } else {
+        $ms = @()
+        if ($null -ne $Goal.milestones) { $ms = @($Goal.milestones) }
+        $mi = [int]$segs[0]
+        if ($mi -lt 0 -or $mi -ge $ms.Count) { return }
+        $steps = @($ms[$mi].steps)
+        $si = [int]$segs[1]
+        if ($si -lt 0 -or $si -ge $steps.Count) { return }
+        if ($segs.Count -eq 2) {
+            $new = @()
+            for ($k = 0; $k -lt $steps.Count; $k++) { if ($k -ne $si) { $new += $steps[$k] } }
+            $ms[$mi].steps = $new
+            return
+        }
+        $parent = $steps[$si]
+    }
+    $anc = @(Get-StepAncestors $Goal $path)
+    for ($i = 2; $i -lt ($segs.Count - 1); $i++) {
+        $kids = @()
+        if ($null -ne $parent.children) { $kids = @($parent.children) }
+        $parent = $kids[[int]$segs[$i]]
+    }
+    $kids = @()
+    if ($null -ne $parent.children) { $kids = @($parent.children) }
+    $last = [int]$segs[$segs.Count - 1]
+    $new = @()
+    for ($k = 0; $k -lt $kids.Count; $k++) { if ($k -ne $last) { $new += $kids[$k] } }
+    $parent | Add-Member -NotePropertyName children -NotePropertyValue $new -Force
+    if ($new.Count -eq 0) { $parent | Add-Member -NotePropertyName status -NotePropertyValue 'todo' -Force }
+    for ($i = $anc.Count - 1; $i -ge 0; $i--) { Sync-BranchStatus $anc[$i] }
 }
 
 function Add-GoalStep($Goal, $text) {
@@ -1482,6 +1619,8 @@ function Rebuild-GoalsPanel {
         if ($null -eq $v) { continue }
         if ($null -ne $v.raw) { $v.rows = @(Get-GoalRows $v.raw) }
     }
+    $keepOffset = 0.0
+    if ($null -ne $script:GoalsScroll) { $keepOffset = $script:GoalsScroll.VerticalOffset }
     $script:GoalsStack.Children.Clear()
     $script:GoalsCards = @()
     $script:GoalsStepBoxes = @()
@@ -1694,10 +1833,10 @@ function Rebuild-GoalsPanel {
                 continue
             }
             $anyStep = $true
-            $mIdx = [int]$row.m
-            $sIdx = [int]$row.s
-            $indent = 0
-            if ($mIdx -ge 0) { $indent = 10 }
+            $lvl = 1
+            if ($null -ne $row.level) { $lvl = [int]$row.level }
+            if ($lvl -lt 1) { $lvl = 1 }
+            $indent = 10 + (($lvl - 1) * 16)
             $stepRow = [System.Windows.Controls.Grid]::new()
             $stepRow.Margin = [System.Windows.Thickness]::new($indent, 1, 0, 1)
             $sc1 = [System.Windows.Controls.ColumnDefinition]::new()
@@ -1712,6 +1851,9 @@ function Rebuild-GoalsPanel {
             $cb.Margin = [System.Windows.Thickness]::new(0, 2, 0, 2)
             $stText = [System.Windows.Controls.TextBlock]::new()
             $stText.Text = [string]$row.title
+            $gt = 0
+            if ($null -ne $row.groupTotal) { $gt = [int]$row.groupTotal }
+            if ($gt -gt 0) { $stText.Text = ('{0}   {1}/{2}' -f $row.title, [int]$row.groupDone, $gt) }
             $stText.FontSize = 12.5
             $stText.TextWrapping = [System.Windows.TextWrapping]::Wrap
             $stText.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(230, 226, 233, 242))
@@ -1735,14 +1877,14 @@ function Rebuild-GoalsPanel {
             } else {
                 $cb.Content = $stText
             }
-            $cb.Tag = @{ g = $cardIndex; m = $mIdx; s = $sIdx }
+            $cb.Tag = @{ g = $cardIndex; path = [string]$row.path }
             $cb.Add_Click({
                 param($s, $e)
                 $tag = $s.Tag
                 $gIdx = [int]$tag.g
                 if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
                 $v = $script:GoalsData[$gIdx]
-                Set-StepDone -Goal $v.raw -mIdx ([int]$tag.m) -sIdx ([int]$tag.s) -done ([bool]$s.IsChecked)
+                Set-StepDoneAt -Goal $v.raw -path ([string]$tag.path) -done ([bool]$s.IsChecked)
                 if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
             [System.Windows.Controls.Grid]::SetColumn($cb, 0)
@@ -1757,7 +1899,7 @@ function Rebuild-GoalsPanel {
             $delStep.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
             $delStep.Cursor = [System.Windows.Input.Cursors]::Hand
             $delStep.ToolTip = '删掉这步'
-            $delStep.Tag = @{ g = $cardIndex; m = $mIdx; s = $sIdx }
+            $delStep.Tag = @{ g = $cardIndex; path = [string]$row.path }
             $delStepGlyph = [System.Windows.Controls.TextBlock]::new()
             $delStepGlyph.Text = '×'
             $delStepGlyph.FontSize = 15
@@ -1774,7 +1916,7 @@ function Rebuild-GoalsPanel {
                 $gIdx = [int]$tag.g
                 if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
                 $v = $script:GoalsData[$gIdx]
-                Remove-GoalStep -Goal $v.raw -mIdx ([int]$tag.m) -sIdx ([int]$tag.s)
+                Remove-GoalStepAt -Goal $v.raw -path ([string]$tag.path)
                 if (Save-GoalsData) { Rebuild-GoalsPanel }
             })
             [System.Windows.Controls.Grid]::SetColumn($delStep, 1)
@@ -1881,6 +2023,8 @@ function Rebuild-GoalsPanel {
         $totalCount = 0
         foreach ($row in @($g.rows)) {
             if ($row.kind -ne 'step') { continue }
+            # 组步不计数，交给它下面的实步（否则父和子会重复算）
+            if ([int]$row.groupTotal -gt 0) { continue }
             $totalCount++
             if ($row.done) { $doneCount++ }
         }
@@ -1890,7 +2034,7 @@ function Rebuild-GoalsPanel {
         $script:GoalsStepBoxes += @($stepBox)
         [void]$script:GoalsStack.Children.Add($card)
     }
-    if ($null -ne $script:GoalsScroll) { $script:GoalsScroll.ScrollToEnd() }
+    if ($null -ne $script:GoalsScroll) { $script:GoalsScroll.ScrollToVerticalOffset($keepOffset) }
     if ($null -ne $script:GoalEditBox) {
         $editorRef = $script:GoalEditBox
         [void]$editorRef.Dispatcher.BeginInvoke([System.Action]{

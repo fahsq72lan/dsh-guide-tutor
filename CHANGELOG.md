@@ -3343,3 +3343,31 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **怎么恢复**
 - 改前整份备份：`D:\dsh_TestSpace\guide-tutor\tmp\overlay.before-goals-v3.ps1`（278249 字节，5703 行）。
 - 或 `git revert <本次提交>`；只想救数据不回代码，可从 `tmp/goals.with-milestones.json` / `tmp/goals.before-check.json` 取回目标结构。
+
+## 2026-11-15 15:55 步骤可以无限往下拆（树形结构 + 叶子计数 + 级联勾选）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\decompose.js`（310 → 520 行）：步骤从「一层」改成「树」。
+  - `normalizeStep()` 递归：`children[]` 同构，`stepId` 逐层拼（`g1-m1-s1` → `g1-m1-s1-s2` → `g1-m1-s1-s2-s1`），带 `depth`。
+  - 新增 `walkSteps()` / `flattenSteps()` / `leafSteps()` / `isBranch()` / `findStep()` / `splitStep()` / `branchCount()` / `syncAncestors()` / `cascade()`。
+  - `MAX_DEPTH = 8` 只防手滑写出无穷递归，超过报 `too-deep`；校验对组步不要求 `product/check`，对叶子照旧。
+  - `setStepStatus()`：勾组步级联子步、取消也级联；子步全 done 时祖先自动 done、被撤销时自动退回。
+  - `goalProgress()` / `recomputeProgress()` / `availableSteps()` 全部按**叶子**算；派发只派叶子，父被 dropped 的不派。
+- `D:\dsh_TestSpace\guide-tutor\lib\goals.js`：`setStepStatus()` 改用 `findStep()` 递归查找（原来只找两层）；新增 `splitStep(stepId, children)`。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：`guide_goal` 新增 `split` action；`show` 递归返回 `children` 与 `group{done,total}`；渲染把树打成缩进文本；参数表加 `children`。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`（5840 → 5990 行）：
+  - 新增 `Count-Leaves` / `Add-StepRows` / `Mark-StepDone` / `Set-StepCascade` / `Sync-BranchStatus` / `Get-StepAncestors` / `Set-StepDoneAt` / `Remove-GoalStepAt`。
+  - `Get-GoalRows()` 改成递归，每行带 `path`（如 `0.1.2`）、`level`、`groupDone/groupTotal`。
+  - 渲染按 `level` 缩进（每层 16px），组步标题后显示 `done/total`。
+  - 卡片右上角的总数改成**只算叶子**（原来把组步也数进去，多出来一个）。
+  - 重画后保持滚动位置（原来 `ScrollToEnd()` 会跳到底）。
+**为什么**
+- 用户要求：「每步小目标可以设置更小级的目标，且可以一直分支下去」。原来只能「目标 → 阶段 → 步骤」两层，装 JDK 这一步拆到「配 JAVA_HOME」就到底了。
+**怎么验证**
+- 测试全部跑过：`tmp/test-units.mjs` 38、`tmp/test-decompose.mjs` 28、`tmp/test-nested.mjs` 16（新增）、`tmp/e2e-real.mjs` 9、`tmp/test-goalrows.ps1` 19（新增，用 AST 抽 overlay 里的真函数跑）。
+- 真实数据：`guide_goal split g1-m1-s1` 拆出 3 个子步（`g1-m1-s1-s1/s2/s3`），`goals.json` 落盘正确。
+- 界面：截图 `tmp/gw-tree3.png`（组步「装 JDK 17 并确认版本 0/3」，三个子步缩进一层）、`tmp/gw-tree4.png`（勾掉第一个子步后整卡 `1/10`、阶段 `1/4`、组步 `1/3`、该行划线）。
+- 测试勾选已撤销（`g1-m1-s1-s1` 回到 `todo`）。
+**怎么恢复**
+- 代码：`git revert` 本次提交。
+- 数据：`g1-m1-s1` 下的 3 个子步是这次拆的，不想要就在看板上把子步 × 掉、或从 `tmp/goals.before-check.json` 取回拆之前的结构。

@@ -28,6 +28,11 @@ import {
   toPlanItem,
   validateGoal,
   flattenGoals,
+  leafSteps,
+  findStep,
+  splitStep,
+  isBranch,
+  branchCount,
 } from './lib/decompose.js'
 import { estimateWin } from './lib/units.js'
 
@@ -2577,20 +2582,24 @@ async function handleEvent(event) {
   const guideGoalTool = {
     name: 'guide_goal',
     description:
-      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；scaffold=拿一份待填的拆解模板与硬规则；decompose=把拆好的阶段步骤整块写回（milestones 数组，先不带 apply 只看校验）；validate=只看校验问题；next=今天该派哪几步（带成功率，太难的单独列出；可直接拿去 guide_plan add，带上 stepId）；spent=按 stepId 汇总记录卡里的实际用时；review=今天的复盘（清单条目 + 实际分钟 + 各目标进度）；done/undo=勾一步；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）；remove=删目标。',
+      '目标与拆解：list=所有目标与进度；show=一个目标的阶段与步骤（步骤可以有多层，会带 level 与 group 计数）；add=新建目标（要 acceptance 验收句）；set=改验收句/状态；scaffold=拿一份待填的拆解模板与硬规则；decompose=把拆好的阶段步骤整块写回（milestones 数组，步骤里可带 children 嵌套；先不带 apply 只看校验）；validate=只看校验问题；split=把某一步再拆成子步骤（stepId 会自动变成 g1-m1-s1-s1，可反复拆）；next=今天该派哪几步（只派最底层的实步，带成功率，太难的单独列出；可直接拿去 guide_plan add，带上 stepId）；spent=按 stepId 汇总记录卡里的实际用时；review=今天的复盘（清单条目 + 实际分钟 + 各目标进度）；done/undo=勾一步（勾组步会把子步一起勾上）；progress=进度；skill=看能力档（各类历史成功率、能力牌）；cap=设一张能力牌（会 have / 半会 partial / 不会 lack / 不确定 unknown）；remove=删目标。',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          description: 'list / show / add / set / scaffold / decompose / validate / next / done / undo / progress / skill / cap / remove / spent / review',
+          description: 'list / show / add / set / scaffold / decompose / validate / split / next / done / undo / progress / skill / cap / remove / spent / review',
         },
         id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
         text: { type: 'string', description: 'add：目标一句话' },
         acceptance: { type: 'string', description: 'add/set：验收句——怎么算做完，要能验证（不能写「掌握/了解」这类）' },
         status: { type: 'string', description: 'set：active / done / paused' },
         milestones: { type: 'string', description: 'decompose：阶段与步骤的 JSON 数组字符串' },
-        stepId: { type: 'string', description: 'done/undo：步骤 id，如 g1-m2-s1' },
+        stepId: { type: 'string', description: 'done/undo/split：步骤 id，如 g1-m2-s1（子步骤是 g1-m2-s1-s1）' },
+        children: {
+          type: 'string',
+          description: 'split：子步骤的 JSON 数组字符串，每条 {title, product, check, kind, units}；可以无限往下拆',
+        },
         limit: { type: 'number', description: 'next：最多派几步（默认 3）' },
         maxUnits: { type: 'number', description: 'next：今天最多几格（默认 3）' },
         cap: { type: 'string', description: 'cap：能力牌 id，如 java-basic' },
@@ -2615,6 +2624,19 @@ async function handleEvent(event) {
         if (Array.isArray(value.items)) {
           for (const item of value.items) lines.push(`${item.stepId} ${item.title}（${item.percent}%）`)
         }
+        if (Array.isArray(value.milestones)) {
+          const walk = (steps, indent) => {
+            for (const step of steps) {
+              const group = step.group ? `  (${step.group.done}/${step.group.total})` : ''
+              lines.push(`${'  '.repeat(indent)}${step.stepId}  ${step.title}${group}`)
+              if (Array.isArray(step.children) && step.children.length) walk(step.children, indent + 1)
+            }
+          }
+          for (const ms of value.milestones) {
+            lines.push(`[${ms.title}]`)
+            walk(ms.steps, 1)
+          }
+        }
         if (value.hint) lines.push(value.hint)
         return [{ type: 'text', text: lines.length ? lines.join('\n') : '好了' }]
       },
@@ -2622,6 +2644,21 @@ async function handleEvent(event) {
     async execute(args = {}) {
       const action = String(args.action || 'list');
       const goalId = String(args.id || '').trim();
+
+      // 步骤树 → 可读结构（递归，带 level 与组步的 done/total）
+      const shapeSteps = (steps) =>
+        steps.map((s) => ({
+          stepId: s.stepId,
+          title: s.title,
+          level: s.depth,
+          kind: s.kind,
+          units: s.units,
+          status: s.status,
+          product: s.product,
+          check: s.check,
+          dependsOn: s.dependsOn,
+          ...(isBranch(s) ? { group: branchCount(s), children: shapeSteps(s.children) } : {}),
+        }));
 
       if (action === 'list') {
         const list = goals.snapshot().map((g) => ({
@@ -2652,16 +2689,7 @@ async function handleEvent(event) {
             id: m.id,
             title: m.title,
             status: m.status,
-            steps: m.steps.map((s) => ({
-              stepId: s.stepId,
-              title: s.title,
-              product: s.product,
-              check: s.check,
-              kind: s.kind,
-              units: s.units,
-              status: s.status,
-              dependsOn: s.dependsOn,
-            })),
+            steps: shapeSteps(m.steps),
           })),
         };
       }
@@ -2866,6 +2894,37 @@ async function handleEvent(event) {
           minutes: rows.reduce((n, row) => n + row.minutes, 0),
           goals: goalLines,
           lines,
+        };
+      }
+
+      if (action === 'split') {
+        const stepId = String(args.stepId || '').trim();
+        if (!stepId) return { ok: false, error: '要给 stepId，比如 g1-m1-s1' };
+        let children = args.children;
+        if (typeof children === 'string') {
+          try {
+            children = JSON.parse(children);
+          } catch (error) {
+            return { ok: false, error: `children 不是合法 JSON：${error?.message ?? error}` };
+          }
+        }
+        if (!Array.isArray(children) || !children.length) {
+          return { ok: false, error: '要给 children 数组，每条写 title，最好带 product 和 check' };
+        }
+        const noTitle = children
+          .map((c, i) => ({ i, c }))
+          .filter(({ c }) => !String(c?.title ?? c?.text ?? '').trim())
+          .map(({ i }) => i + 1);
+        if (noTitle.length) return { ok: false, error: `第 ${noTitle.join('、')} 条没有标题` };
+        const result = goals.splitStep(stepId, children);
+        appendDaylog('note', `拆步骤 ${stepId}：+${children.length} 个子步骤`);
+        return {
+          ok: true,
+          stepId: result.step?.stepId || stepId,
+          children: result.step?.children || 0,
+          line: `${result.step?.title || stepId} 拆成 ${result.step?.children || 0} 个子步骤`,
+          progress: result.progress,
+          hint: '子步骤各有自己的 stepId（父 id 后加 -s1、-s2），可以继续拆，也可以直接 guide_plan add 排进清单',
         };
       }
 
