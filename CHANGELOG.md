@@ -3413,3 +3413,21 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 代码：`git revert` 本次提交。
 - 数据：`chores.json` 是新建文件，删掉即回到没有杂务的状态；自动排进清单的三条可以用 `guide_plan action=remove` 划掉。
 - 注意：`state.chores` 是运行态字段，删掉代码后旧 state 里会留着，不影响使用。
+
+## 2026-11-15 16:33 目标步骤按今天的空档自动派发（不再死板 3 步）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - 新增 `goalCapacity({now})`：从「现在之后的第一个整十分钟」到 22:30，减去今天清单已占的时段，算出还剩多少分钟；`targetUnits = clamp(round(free × 0.6 / 30), 2, 10)`。
+  - 新增 `clockOfMin()`、`nextFreeSlot()`（在 busy 列表里找第一个塞得下的起点）。
+  - 新增 `autoPlanGoals({dateKey, now})`：取 `nextSteps(limit=targetUnits, maxUnits=targetUnits)`，逐条算成功率、跳过 `too-hard`、用 `nextFreeSlot` 找位置、`planRun add` 带 `goalId/milestoneId/stepId`，两条之间留 10 分钟。
+  - tick handler 改成「每天第一次过 07:30 排两样」：先杂务（`choreAutoDate`）、再目标（`goalAutoDate`）；日志 `goal auto plan start` / `goal auto plan done: N 步`。
+  - `guide_goal next` 不传 `limit/maxUnits` 时改成按今天的容量（原来死写 3），返回里多一个 `capacity: {freeMinutes, targetUnits}`。
+**为什么**
+- 用户 m04328：「我是说一天时间有很多。如果任务太少会太空」。原来 `nextSteps` 默认 `limit:3, maxUnits:3`，且只有 `guide_goal next` 能触发——没人调就一直不动，今天清单里只有 14:32 手动加的两条。
+**怎么验证**
+- 重载后 `plugin.log` 出现 `goal auto plan start 2026-11-15` → `goal auto plan done: 4 步`，`plan.json` 自动多出四条带 `stepId` 的：`16:35-17:05 下载 Temurin 17 安装包并装好`（g1-m1-s1-s1）、`17:15-17:45 配 JAVA_HOME 与 Path`（g1-m1-s1-s2）、`17:55-18:25 在 IDEA 里选中这个 JDK`（g1-m1-s1-s3）、`20:00-20:30 写一个 @Autowired 的 Controller 并访问到`（g1-m2-s1）；四条都绕开了 19:00 洗澡与 19:30 洗衣服。
+- 回归：test-chores 37、test-units 38、test-decompose 28、test-nested 16、e2e-real 9、test-goalrows 25 全过；`node --check index.js` exit 0。
+**怎么恢复**
+- 代码：`git revert` 本次提交。
+- 数据：自动派进来的四条可以用 `guide_plan action=remove` 划掉；`goalAutoDate` 只在内存里，重启后会重新判断一次。

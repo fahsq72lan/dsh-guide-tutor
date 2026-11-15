@@ -2707,6 +2707,103 @@ async function handleEvent(event) {
     return { ok: true, items: created, skipped: result.skipped, lines }
   }
 
+  /** 今天还剩多少分钟能装任务：从下一个整十分钟到 22:30，减去已排的清单条目。 */
+  function goalCapacity({ now = new Date() } = {}) {
+    const dayEnd = 22 * 60 + 30
+    const nowMin = now.getHours() * 60 + now.getMinutes()
+    const from = Math.max(8 * 60, Math.ceil(nowMin / 10) * 10)
+    if (from >= dayEnd) return { from, to: dayEnd, free: 0, busy: [], targetUnits: 0 }
+    const items = plan.forToday(now).items || []
+    const busy = items
+      .map((i) => [minutesOf(i.from), minutesOf(i.to)])
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+      .sort((x, y) => x[0] - y[0])
+    let free = 0
+    let cursor = from
+    for (const [a, b] of busy) {
+      if (b <= cursor) continue
+      if (a > cursor) free += Math.min(a, dayEnd) - cursor
+      cursor = Math.max(cursor, Math.min(b, dayEnd))
+      if (cursor >= dayEnd) break
+    }
+    if (cursor < dayEnd) free += dayEnd - cursor
+    // 一步按 1 格 30 分钟估，留 40% 的缓冲（吃饭、走动、临时事变）。
+    const targetUnits = Math.min(10, Math.max(2, Math.round((free * 0.6) / 30)))
+    return { from, to: dayEnd, free: Math.max(0, free), busy, targetUnits }
+  }
+
+  function clockOfMin(minutes) {
+    const m = Math.max(0, Math.round(Number(minutes) || 0))
+    return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
+  }
+
+  function nextFreeSlot(cursor, minutes, busy, dayEnd) {
+    let start = cursor
+    for (const [a, b] of busy) {
+      if (b <= start) continue
+      if (a >= start + minutes) break
+      start = Math.max(start, b)
+    }
+    if (start + minutes > dayEnd) return null
+    return start
+  }
+
+  /** 按今天的空档把目标步骤派进清单：填到空档的六成，单次最多 10 格。 */
+  async function autoPlanGoals({ dateKey = todayKey(new Date()), now = new Date() } = {}) {
+    const cap = goalCapacity({ now })
+    if (cap.free < 30) {
+      return { ok: true, items: [], lines: [`今天剩下的空档只有 ${cap.free} 分钟，先不派了`] }
+    }
+    const profile = skill.read()
+    const picked = pickNextSteps(goals.active(), { limit: cap.targetUnits, maxUnits: cap.targetUnits })
+    const today = plan.forToday(now)
+    const taken = new Set((today.items || []).map((i) => i.stepId).filter(Boolean))
+    const busy = [...cap.busy]
+    const added = []
+    const skipped = []
+    let cursor = cap.from
+    for (const { goal, milestone, step } of picked) {
+      if (taken.has(step.stepId)) continue
+      const win = estimateWin(step, profile)
+      if (win.verdict === 'too-hard') {
+        skipped.push({ stepId: step.stepId, title: step.title, reason: `成功率 ${Math.round(win.p * 100)}%，太难` })
+        continue
+      }
+      const minutes = Math.max(20, Math.round(Number(step.units || 1) * 30))
+      const start = nextFreeSlot(cursor, minutes, busy, cap.to)
+      if (start == null) {
+        skipped.push({ stepId: step.stepId, title: step.title, reason: '今天塞不下了' })
+        continue
+      }
+      const from = clockOfMin(start)
+      const to = clockOfMin(start + minutes)
+      const addedItem = await planRun({
+        action: 'add',
+        from,
+        to,
+        title: step.title,
+        goalId: goal.id,
+        milestoneId: milestone.id,
+        stepId: step.stepId,
+        priority: 'P1',
+        note: step.check ? `验：${step.check}` : '',
+      })
+      if (addedItem?.ok) {
+        busy.push([start, start + minutes])
+        busy.sort((x, y) => x[0] - y[0])
+        cursor = start + minutes + 10
+        added.push({ stepId: step.stepId, from, to, title: step.title, percent: Math.round(win.p * 100) })
+      }
+    }
+    if (added.length) {
+      appendDaylog('activity', `目标排程：${added.map((a) => `${a.from} ${a.title}`).join('；')}`)
+    }
+    const lines = added.map((a) => `排上 ${a.from}–${a.to} ${a.title}（${a.percent}%）`)
+    for (const s of skipped) lines.push(`没排：${s.title}（${s.reason}）`)
+    if (!added.length) lines.push('没有可派的步骤：目标都做完了、暂停了，或者还没拆')
+    return { ok: true, items: added, skipped, slot: cap, lines }
+  }
+
   const guideChoresTool = {
     name: 'guide_chores',
     description:
@@ -3014,8 +3111,10 @@ async function handleEvent(event) {
       }
 
       if (action === 'next') {
-        const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : 3;
-        const maxUnits = Number.isFinite(Number(args.maxUnits)) ? Number(args.maxUnits) : 3;
+        // 默认按"今天还能装多少"来派，而不是死板的 3 格：空的时候多派，忙的时候少派。
+        const cap = goalCapacity({ now: new Date() });
+        const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : cap.targetUnits;
+        const maxUnits = Number.isFinite(Number(args.maxUnits)) ? Number(args.maxUnits) : cap.targetUnits;
         const profile = skill.read();
         const picked = pickNextSteps(goals.active(), { limit, maxUnits });
         const today = plan.forToday(new Date());
@@ -3045,6 +3144,7 @@ async function handleEvent(event) {
           ok: true,
           count: ready.length,
           units: ready.reduce((n, item) => n + item.units, 0),
+          capacity: { freeMinutes: cap.free, targetUnits: cap.targetUnits },
           items: ready,
           tooHard,
           hint: ready.length
@@ -3856,26 +3956,35 @@ async function handleEvent(event) {
           log(`plan tick failed: ${error?.message ?? error}`)
         }
       })
-      // 杂务：每天第一次过 07:30，把今天该做的琐事排进清单。已经排过就不动。
+      // 排程：每天第一次过 07:30 排两样东西——杂务（琐事）和目标步骤（正事）。
+      // 目标按今天的空档算，填到六成，单次最多 10 格；不塞满是为了留缓冲。
       let choreAutoDate = ''
+      let goalAutoDate = ''
       registerTickHandler(() => {
         try {
           const now = new Date()
           const key = todayKey(now)
           const minuteOfDay = now.getHours() * 60 + now.getMinutes()
           if (minuteOfDay % 5 === 0) pushChoreState(key)
-          if (choreAutoDate === key) return
-          if (minuteOfDay < 7 * 60 + 30) return
-          choreAutoDate = key
-          const day = choreDay(key)
-          if (!day.due.length) return
-          if (day.due.every((c) => day.plannedIds.has(c.id))) return
-          log(`chore auto plan start ${key}`)
-          void autoPlanChores({ dateKey: key, now }).catch((error) =>
-            log(`chore auto plan failed: ${error?.message ?? error}`),
-          )
+          if (choreAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
+            choreAutoDate = key
+            const day = choreDay(key)
+            if (day.due.length && !day.due.every((c) => day.plannedIds.has(c.id))) {
+              log(`chore auto plan start ${key}`)
+              void autoPlanChores({ dateKey: key, now }).catch((error) =>
+                log(`chore auto plan failed: ${error?.message ?? error}`),
+              )
+            }
+          }
+          if (goalAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
+            goalAutoDate = key
+            log(`goal auto plan start ${key}`)
+            void autoPlanGoals({ dateKey: key, now })
+              .then((result) => log(`goal auto plan done: ${result.items.length} 步`))
+              .catch((error) => log(`goal auto plan failed: ${error?.message ?? error}`))
+          }
         } catch (error) {
-          log(`chore tick failed: ${error?.message ?? error}`)
+          log(`plan tick failed: ${error?.message ?? error}`)
         }
       })
       if (manage) {
