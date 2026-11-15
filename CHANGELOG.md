@@ -3244,3 +3244,21 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - 目标拆解：把 `tmp/goals.before-decompose.json` 覆盖回 `~/.dsh/guide-tutor/goals.json`。
 - 清单两条：`guide_plan remove` 对应 id，或直接删 `plan.json` 里那两条。
 - 代码：`git revert <本次提交>`。
+## 2026-11-15 14:42 冷启动不再一上来就判「太难」
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\units.js`：新增常量 `COLD_START_PRIOR = 0.85`；`pSkill()` 在 `kinds`/`types` 总样本为 0 时直接返回该值（原来走 Beta(2,1) 得 0.667）；`NOVELTY_BY_SEEN.unknown` 0.7 → 0.8（+1 行注释说明原因）。
+- `D:\dsh_TestSpace\guide-tutor\lib\capabilities.js` L113-116：`pCap()` 在「所有能力牌都是 unknown」时返回 `max(floor, 0.9)`，不再按 0.75 逐张折价。
+- `D:\dsh_TestSpace\guide-tutor\tmp\test-units.mjs`：两条断言随新参数改（`pSkill 无任何记录 = 冷启动 0.85`、`pNovelty 完全陌生 = 0.8`）。
+
+**为什么**
+- 真实数据实测（`tmp/test-live.mjs`，g1 的 5 个步骤）发现：一份 `user-skill.json` 都没有时，5 步里 4 步被判 `too-hard`，advice 全是「这类产物你还没做成过」，一件都派不出去。
+- 三个因子叠乘把冷启动压死：`p_cap 0.75 × p_skill 0.667 × p_novelty 0.7 = 0.35`。第一次用的人不该被判成什么都做不了。
+- 修后同一批步骤：71% / 61% / 71% / 79% / 71%，全部 `good`。
+
+**怎么验证**
+- `node tmp/test-units.mjs` → 38 passed；`node tmp/test-decompose.mjs` → 28 passed；`node tmp/e2e-real.mjs` → 9 passed。
+- `node tmp/test-live.mjs` 第 2 节五步全部 `good`，无 `too-hard`。
+
+**怎么恢复**
+- `git checkout HEAD~1 -- lib/units.js lib/capabilities.js tmp/test-units.mjs`；或把 `COLD_START_PRIOR` 改回 `(0+2)/(0+3)`、`NOVELTY_BY_SEEN.unknown` 改回 0.7、删掉 `pCap` 里那段 `unknown === caps.length` 的分支。
