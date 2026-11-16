@@ -810,6 +810,20 @@ async function handleEvent(event) {
         log(`goal removed from overlay: ${gid}, cleared ${cleared.length}`)
         break
       }
+      case 'plan_step': {
+        // 目标看板上「排这一步」：手动把某一步塞进今天清单（找空档、去重）。
+        const sid = String(event.stepId || '').trim()
+        if (!sid) break
+        void (async () => {
+          const result = await planOneStep(sid)
+          appendDaylog(
+            'activity',
+            result.ok ? `排进清单：${result.from} ${result.title}` : `没排上 ${sid}：${result.error}`,
+          )
+          log(`plan step from overlay: ${sid} -> ${result.ok ? `${result.from}-${result.to}` : result.error}`)
+        })().catch((error) => log(`plan step failed: ${error?.message ?? error}`))
+        break
+      }
       case 'dispatch_goals': {
         // 清单卡上的「派发」按钮：定今天派几格，撤掉没做的、按新数重排。
         const units = Math.round(Number(event.units))
@@ -2875,6 +2889,7 @@ async function handleEvent(event) {
         milestoneId: milestone.id,
         stepId: step.stepId,
         priority: 'P1',
+        auto: true,
         note: step.check ? `验：${step.check}` : '',
       })
       if (addedItem?.ok) {
@@ -2893,10 +2908,51 @@ async function handleEvent(event) {
     return { ok: true, items: added, skipped, slot: cap, lines }
   }
 
-  /** 把今天「带 stepId 且没完成」的清单条目撤掉，供重新派发用。 */
+  /** 手动把「某一步」排进今天清单。
+   *  和「派发」共用同一套身份（stepId），区别是 auto=false：
+   *  派发重排时只撤自己排的，这条不会被清掉。
+   *  已经排过同一步（未完成）就跳过，避免重复。 */
+  async function planOneStep(stepId, { now = new Date() } = {}) {
+    const sid = String(stepId || '').trim()
+    if (!sid) return { ok: false, error: '没给 stepId' }
+    const gid = sid.split('-')[0]
+    const goal = goals.get(gid)
+    if (!goal) return { ok: false, error: `找不到目标 ${gid}` }
+    const step = findStep(goal, sid)
+    if (!step) return { ok: false, error: `找不到步骤 ${sid}` }
+    if (isBranch(step)) return { ok: false, error: '这一步还挂着子步骤，排最底下那层' }
+    const today = plan.forToday(now)
+    const dup = (today.items || []).find((i) => i.stepId === sid && !i.done)
+    if (dup) return { ok: false, error: `今天已经排过：${dup.from}–${dup.to}` }
+    const cap = goalCapacity({ now })
+    const minutes = Math.max(20, Math.round(Number(step.units || 1) * 30))
+    const start = nextFreeSlot(cap.from, minutes, cap.busy, cap.to)
+    if (start == null) return { ok: false, error: '今天塞不下了' }
+    const ms = (goal.milestones || []).find((m) => findStep({ milestones: [m] }, sid)) || null
+    const from = clockOfMin(start)
+    const to = clockOfMin(start + minutes)
+    const added = await planRun({
+      action: 'add',
+      from,
+      to,
+      title: step.title,
+      goalId: goal.id,
+      milestoneId: ms ? ms.id : '',
+      stepId: sid,
+      priority: 'P1',
+      auto: false,
+      note: step.check ? `验：${step.check}` : '',
+    })
+    if (!added?.ok) return { ok: false, error: added?.error || '写清单失败' }
+    appendDaylog('activity', `手动排一步：${from} ${step.title}`)
+    return { ok: true, from, to, title: step.title }
+  }
+
+  /** 把今天「派发自己排进来、还没完成」的条目撤掉，供重新派发用。
+   *  只撤 auto=true 的：手动「排进清单」和别的工具加的条目不动。 */
   async function clearAutoSteps({ now = new Date() } = {}) {
     const today = plan.forToday(now)
-    const victims = (today.items || []).filter((i) => i.stepId && !i.done)
+    const victims = (today.items || []).filter((i) => i.auto && i.stepId && !i.done)
     const removed = []
     for (const item of victims) {
       const result = await planRun({ action: 'remove', id: item.id })
@@ -3053,7 +3109,7 @@ async function handleEvent(event) {
       properties: {
         action: {
           type: 'string',
-          description: 'list / show / add / set / scaffold / decompose / validate / split / next / dispatch / done / undo / progress / skill / cap / remove / spent / review',
+          description: 'list / show / add / set / scaffold / decompose / validate / split / plan / next / dispatch / done / undo / progress / skill / cap / remove / spent / review',
         },
         id: { type: 'string', description: 'show/set/progress：目标 id，如 g1' },
         text: { type: 'string', description: 'add：目标一句话' },
@@ -3212,6 +3268,21 @@ async function handleEvent(event) {
         return { ok: true, written: true, id: goal.id, progress: goalProgress(goal) };
       }
 
+      if (action === 'plan') {
+        // 把某一步直接排进今天清单：找空档、去重、带 stepId。
+        const sid = String(args.stepId || '').trim()
+        if (!sid) return { ok: false, error: '要给 stepId，比如 g1-m1-s1' }
+        const result = await planOneStep(sid)
+        return {
+          ok: result.ok,
+          error: result.error || '',
+          stepId: sid,
+          from: result.from || '',
+          to: result.to || '',
+          title: result.title || '',
+          line: result.ok ? `排上 ${result.from}–${result.to} ${result.title}` : `没排上：${result.error}`,
+        }
+      }
       if (action === 'next') {
         // 默认按"今天还能装多少"来派，而不是死板的 3 格：空的时候多派，忙的时候少派。
         const cap = goalCapacity({ now: new Date() });

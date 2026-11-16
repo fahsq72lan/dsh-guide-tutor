@@ -1325,6 +1325,36 @@ function Count-Leaves($step) {
     return @{ done = $d; total = $t }
 }
 
+# 找这个目标「下一步能做的那一片叶子」：第一个还没 done 的实步（带子步骤的组步跳过）。
+function Find-NextLeafStep($goal) {
+    if ($null -eq $goal) { return $null }
+    $lists = @()
+    if ($null -ne $goal.milestones) { $lists += @($goal.milestones) }
+    if ($null -ne $goal.steps) { $lists += @(@{ steps = $goal.steps }) }
+    $walk = $null
+    $walk = {
+        param($steps)
+        foreach ($st in @($steps)) {
+            if ($null -eq $st) { continue }
+            $kids = @()
+            if ($null -ne $st.children) { $kids = @($st.children) }
+            if ($kids.Count -gt 0) {
+                $r = & $walk $kids
+                if ($null -ne $r) { return $r }
+                continue
+            }
+            if (-not (Get-StepDone $st) -and ([string]$st.status) -ne 'dropped') { return $st }
+        }
+        return $null
+    }
+    foreach ($m in $lists) {
+        if ($null -eq $m) { continue }
+        $r = & $walk @($m.steps)
+        if ($null -ne $r) { return $r }
+    }
+    return $null
+}
+
 # 递归把「一步及其子步骤」压成行；path 是定位用的索引链，如 0.1.2。
 function Add-StepRows($out, $steps, $mIdx, $prefix, $level) {
     if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
@@ -2314,13 +2344,20 @@ function Rebuild-GoalsPanel {
         $planBtn.Foreground = [System.Windows.Media.Brushes]::White
         $planBtn.BorderThickness = [System.Windows.Thickness]::new(0)
         $planBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+        $planBtn.Content = '排下一步'
         $planBtn.Tag = $cardIndex
-        $planBtn.ToolTip = '预填目标标题，时间自己挑'
+        $planBtn.ToolTip = '把这一步按空档排进今天清单（带上步骤身份，勾完成会回写进度）'
         $planBtn.Add_Click({
             param($s, $e)
             $gIdx = [int]$s.Tag
             if ($gIdx -lt 0 -or $gIdx -ge @($script:GoalsData).Count) { return }
-            Show-AddTaskWindow -PrefillTitle ([string]$script:GoalsData[$gIdx].text)
+            $goal = $script:GoalsData[$gIdx]
+            $leaf = Find-NextLeafStep $goal.raw
+            if ($null -eq $leaf) {
+                try { [System.Windows.MessageBox]::Show('这个目标没有可做的步骤了：要么都做完了，要么还没拆。', '排下一步') | Out-Null } catch { }
+                return
+            }
+            Send-OverlayEvent @{ type = 'plan_step'; stepId = [string]$leaf.stepId }
         })
         [void]$actions.Children.Add($planBtn)
         [void]$inner.Children.Add($actions)

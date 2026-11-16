@@ -3628,3 +3628,33 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **说明**
 拖动后关闭窗口再打开会回到屏幕正中——`New-GWindow` 用的是 `WindowStartupLocation = CenterScreen`，位置不持久化。这是既有行为，本次没改。
+
+## 2026-11-16 09:32 「排进今日清单」改成「排下一步」，派发不再撤手动排的条目
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - 新增 `Find-NextLeafStep($goal)`：递归找该目标第一个「没 done 的实步」（有子步骤的组步跳过）。约 +30 行。
+  - 目标卡底部按钮由「排进今日清单」（`Show-AddTaskWindow -PrefillTitle 目标标题`）换成「排下一步」：点击找下一个可做叶子，`Send-OverlayEvent @{ type='plan_step'; stepId=… }`；没有可做步骤时弹一句提示。约 +12 / −8 行。
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js`：清单条目新增 `auto` 字段（读 L113 附近、写 L733 附近），标记「这条是派发自己排进来的」。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - `autoPlanGoals` 排的条目写 `auto: true`。
+  - `clearAutoSteps()` 的过滤从「所有带 stepId 且未完成」改成「`auto && stepId && !done`」——派发重排只撤自己排的。
+  - 新增 `planOneStep(stepId)`：手动排某一步，找空档（`nextFreeSlot`）、去重（今天已有同 stepId 未完成就报错）、带 `stepId/goalId/milestoneId`、`auto: false`。
+  - 新增 overlay 事件 `plan_step`；`guide_goal` 新增 `plan` action（参数 `stepId`）。
+
+**为什么**
+用户报「『排进当日清单』和派发功能冲突」。查下来是两个问题叠着：
+1. 旧按钮把**目标标题**预填进「加任务」窗口，加出来的条目**没有 stepId**，既不算进度、也和派发排的「叶子步骤」形成两条同义条目；
+2. `clearAutoSteps()` 会撤掉今天**所有**带 stepId 且未完成的条目，包括用户手动排的——点一次派发，手动排的就被吞了。
+
+**怎么验证**
+- `node --check index.js`、`lib/plan.js` exit 0；`overlay.ps1` `[Parser]::ParseInput` 0 错误、BOM 仍 `239,187,191`。
+- `Find-NextLeafStep` 用 AST 抽函数实测：g1→`g1-m1-s1`、g2→`g2-m1-s1`、g3→`g3-m2-s1`（作业 5 已完成，正确跳到作业 6 第一步）。
+- `guide_goal action=plan stepId=g2-m1-s1` → 「排上 14:10–14:40 跑通课本第一章的 3 个示例脚本」，plan.json 里 `auto=false`。
+- 再 `guide_goal action=dispatch units=8` → 6 条 g1 步骤被撤掉重排（`auto=true`），**14:10 那条 g2 手动排的原样保留**，杂务两条也没动。
+
+**怎么恢复**
+`git revert` 本次提交。`auto` 是新增字段，旧数据缺省为 `false`（会被当作手动排，派发不撤）；要恢复旧行为把 `clearAutoSteps` 的过滤改回 `i.stepId && !i.done` 即可。
+
+**说明**
+今天已有的 6 条 g1 步骤手工补了 `auto: true`（它们是旧版派发生成的），否则新逻辑会把它们当手动排的、撤不掉。
