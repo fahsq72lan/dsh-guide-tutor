@@ -2776,59 +2776,119 @@ function Rebuild-ReviewPanel {
     # ---- 周视图 ----
     if ($script:ReviewView -eq 'week') {
         $w = $snap.week
-        $grid = [System.Windows.Controls.Grid]::new()
-        for ($i = 0; $i -lt 7; $i += 1) {
-            $cd = [System.Windows.Controls.ColumnDefinition]::new()
-            $cd.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
-            [void]$grid.ColumnDefinitions.Add($cd)
+        $days = @($w.days)
+
+        $range = [System.Windows.Controls.TextBlock]::new()
+        if ($days.Count -gt 0) {
+            $range.Text = ('{0} ~ {1}' -f [string]$days[0].date, [string]$days[$days.Count - 1].date)
         }
-        $idx = 0
-        foreach ($day in @($w.days)) {
-            $cell = [System.Windows.Controls.StackPanel]::new()
-            $cell.Margin = [System.Windows.Thickness]::new(2, 0, 2, 0)
-            $dow = [System.Windows.Controls.TextBlock]::new()
-            $dow.Text = '一二三四五六日'[[int](([datetime]::Parse($day.date)).DayOfWeek + 6) % 7]
-            $dow.FontSize = 9.5
-            $dow.Foreground = $dim
-            $dow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
-            [void]$cell.Children.Add($dow)
+        $range.FontSize = 9.5
+        $range.Foreground = $dim
+        $range.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+        $range.Margin = [System.Windows.Thickness]::new(0, 0, 0, 10)
+        [void]$stack.Children.Add($range)
 
-            $num = [System.Windows.Controls.TextBlock]::new()
-            $num.Text = [string]$day.count
-            $num.FontSize = 15
-            $num.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
-            $num.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
-            $num.Margin = [System.Windows.Thickness]::new(0, 4, 0, 4)
-            $num.Foreground = if ([int]$day.count -gt 5) { $red } elseif ([int]$day.count -gt 0) { $ink } else { $dim }
-            [void]$cell.Children.Add($num)
+        $dowChars = '一二三四五六日'
+        $peakCount = 0
+        $peakDate = ''
+        $emptyList = @()
+        foreach ($day in $days) {
+            $cnt = [int]$day.count
+            if ($cnt -gt $peakCount) { $peakCount = $cnt; $peakDate = [string]$day.date }
+            if ($cnt -eq 0) { $emptyList += [string]$day.date }
 
-            $box = [System.Windows.Controls.Border]::new()
-            $box.Height = 2
-            $box.Background = if ([int]$day.count -gt 5) { $red } elseif ([int]$day.count -gt 0) { $blue } else { $line }
-            [void]$cell.Children.Add($box)
+            $row = [System.Windows.Controls.Grid]::new()
+            $row.Margin = [System.Windows.Thickness]::new(0, 0, 0, 3)
+            $row.MinHeight = 24
+            foreach ($wd in @(18, 46, 34)) {
+                $cd = [System.Windows.Controls.ColumnDefinition]::new()
+                $cd.Width = [System.Windows.GridLength]::new($wd, [System.Windows.GridUnitType]::Pixel)
+                [void]$row.ColumnDefinitions.Add($cd)
+            }
+            $cdl = [System.Windows.Controls.ColumnDefinition]::new()
+            $cdl.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            [void]$row.ColumnDefinitions.Add($cdl)
 
-            if ($day.date -eq $snap.date) { $cell.Background = Get-ReviewBrush 239 232 218 }
-            [System.Windows.Controls.Grid]::SetColumn($cell, $idx)
-            [void]$grid.Children.Add($cell)
-            $idx += 1
+            if ([string]$day.date -eq [string]$snap.date) {
+                $row.Background = Get-ReviewBrush 239 232 218
+            }
+
+            $dw = [System.Windows.Controls.TextBlock]::new()
+            $dw.Text = [string]$dowChars[[int](([datetime]::Parse([string]$day.date)).DayOfWeek + 6) % 7]
+            $dw.FontSize = 10
+            $dw.Foreground = $dim
+            $dw.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            [System.Windows.Controls.Grid]::SetColumn($dw, 0)
+            [void]$row.Children.Add($dw)
+
+            $dt = [System.Windows.Controls.TextBlock]::new()
+            $dt.Text = ([string]$day.date).Substring(5)
+            $dt.FontSize = 10
+            $dt.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+            $dt.Foreground = $dim
+            $dt.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            [System.Windows.Controls.Grid]::SetColumn($dt, 1)
+            [void]$row.Children.Add($dt)
+
+            $nm = [System.Windows.Controls.TextBlock]::new()
+            $nm.Text = if ($cnt -gt 0) { "$cnt 张" } else { '—' }
+            $nm.FontSize = 10.5
+            $nm.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+            $nm.Foreground = if ($cnt -gt 5) { $red } elseif ($cnt -gt 0) { $ink } else { $dim }
+            $nm.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            [System.Windows.Controls.Grid]::SetColumn($nm, 2)
+            [void]$row.Children.Add($nm)
+
+            $tt = [System.Windows.Controls.TextBlock]::new()
+            $titles = @($day.titles)
+            if ($titles.Count -gt 0) { $tt.Text = ($titles -join '  ') }
+            $tt.FontSize = 9.5
+            $tt.Foreground = $dim
+            $tt.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+            $tt.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+            $tt.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+            $tt.Margin = [System.Windows.Thickness]::new(6, 0, 0, 0)
+            [System.Windows.Controls.Grid]::SetColumn($tt, 3)
+            [void]$row.Children.Add($tt)
+
+            [void]$stack.Children.Add($row)
         }
-        [void]$stack.Children.Add($grid)
+
+        Add-ReviewDivider $stack
 
         $sum = [System.Windows.Controls.TextBlock]::new()
         $sum.Text = ('本周到期 {0} 张 · 已复习 {1} 次' -f [int]$w.total, [int]$w.done)
         $sum.FontSize = 10
-        $sum.Foreground = $dim
-        $sum.Margin = [System.Windows.Thickness]::new(0, 18, 0, 0)
+        $sum.Foreground = $ink
+        $sum.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
         $sum.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
         [void]$stack.Children.Add($sum)
+
+        if ($peakCount -gt 0) {
+            $pl = [System.Windows.Controls.TextBlock]::new()
+            $pl.Text = ('最重的一天 {0}，{1} 张' -f $peakDate.Substring(5), $peakCount)
+            $pl.FontSize = 9.5
+            $pl.Foreground = $dim
+            $pl.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+            [void]$stack.Children.Add($pl)
+        }
+        if ($emptyList.Count -gt 0) {
+            $el = [System.Windows.Controls.TextBlock]::new()
+            $el.Text = ('空着的日子：{0}' -f (($emptyList | ForEach-Object { $_.Substring(5) }) -join '、'))
+            $el.FontSize = 9.5
+            $el.Foreground = $dim
+            $el.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $el.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+            [void]$stack.Children.Add($el)
+        }
 
         if (-not [string]::IsNullOrWhiteSpace([string]$w.suggestion)) {
             $sg = [System.Windows.Controls.TextBlock]::new()
             $sg.Text = [string]$w.suggestion
-            $sg.FontSize = 10
+            $sg.FontSize = 9.5
             $sg.Foreground = $red
             $sg.TextWrapping = [System.Windows.TextWrapping]::Wrap
-            $sg.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+            $sg.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
             [void]$stack.Children.Add($sg)
         }
         return
