@@ -3751,3 +3751,23 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 `git revert` 本次提交。纯文档，无数据影响。
+
+## 2026-11-24 15:36 复习本落地（艾宾浩斯遗忘曲线 + 纸手账界面）
+
+**改了什么**
+- 新增 `D:\dsh_TestSpace\guide-tutor\lib\review-store.js`（约 400 行）：R = (1 + t/(FACTOR·S))^DECAY，`FACTOR = 19/81`、`DECAY = -0.5`；`applyGrade()` 按「记得 / 模糊 / 忘了」重算 S 与下次到期，忘了 S×0.35 且 20 分钟后重来，连忘 4 次转 leech 挂起；`dayView/weekView/monthView/stats` 三视图纯函数；`review.json` 读坏时备份 `.broken-<ts>` 并拒绝写盘。
+- `index.js`：`onGoalStepChange` 里叶子步骤 done 时自动建卡（组步不建）；`dropGoalItems` 之后挂起该目标的卡；新增 `pushReviewState()`（写 `state.review`，tick 每 5 分钟）；新增 `guide_review` 工具（list/stats/day/week/month/add/grade/backfill/suspend/resume/remove）；overlay 事件 `review_open` / `review_grade` / `review_add`。
+- `native/overlay.ps1`（+约 900 行）：新增 `Show-ReviewWindow` 纸手账风窗口——三层纸叠、版心双线、朱红「复」字章、日/周/月三视图、卡片面三按钮；面板页眉加「复习」按钮；`Apply-State` 里数据指纹变化时自动重画（打完卡界面立刻更新，不会停在旧数字）。
+- 修两处：①新建卡第一次复习时 R 取 `wantRetention`，否则刚建卡立刻复习收益恒为 0、S 不变；②`dayView` 的「已逾期」按日期比较而非时间比较，否则当天早上到期的卡会被算成逾期。
+- 修一处 UI bug：点日/周/月切换后 tab 会消失——把 tab 行抽成 `Add-ReviewTabs`，每次重画都重建。
+
+**为什么**
+用户 11-24 给了外部 AI 写的复习调度 spec，核对数学正确后要落地；并明确要求界面「风格完全和现在的不一样」，所以做成纸手账（米白纸、墨线、朱红章），与现有深色玻璃界面区分开。
+
+**怎么验证**
+- `tmp/test-review.mjs` 16 项、`tmp/test-review-store.mjs` 9 项全过（R(S,S)=0.9、intervalFor(0.9,S)=S、金标表前 4 轮 1.0152/1.7251/2.8778/4.7016 误差 <0.5%）。
+- 真实数据 backfill 出 2 张卡；界面点「记得」后 `review.json` 里 `r-g4-m1-s1` 的 S 由 1.0 → 1.7001、dueAt 由 11-24 15:30 → 11-26 08:30、state learning → review，`plugin.log` 记 `review graded: r-g4-m1-s1 g=3 S=1.70`；界面随即变成「今天到期 1 / 以后 1 / 今天已复习 1」。
+- 日、周、月三视图均截图确认（`tmp/rv4.png`、`tmp/rv-week2.png`、`tmp/rv-month.png`）。
+
+**怎么恢复**
+`git revert` 本次提交；`~/.dsh/guide-tutor/review.json` 可直接删除（删了等于清空复习记录，不影响目标与清单）。

@@ -2404,6 +2404,699 @@ if ($null -eq $script:GoalCollapsed) { $script:GoalCollapsed = @{} }
 
 $script:DispatchWindow = $null
 
+# ---- 复习本（纸手账风）：框架 ----
+function Get-ReviewSnapshot {
+    try {
+        if ($null -ne $script:LastState -and $null -ne $script:LastState.review) { return $script:LastState.review }
+    }
+    catch { }
+    return [pscustomobject]@{
+        date           = ''
+        stats          = [pscustomobject]@{ total = 0; dueToday = 0; overdue = 0; avgS = 0; leech = 0; suspended = 0 }
+        day            = [pscustomobject]@{ overdue = @(); today = @(); later = @(); laterMore = 0; doneToday = @() }
+        week           = [pscustomobject]@{ days = @(); total = 0; done = 0; suggestion = '' }
+        month          = [pscustomobject]@{ cells = @(); total = 0; done = 0; peak = [pscustomobject]@{ date = ''; count = 0 } }
+    }
+}
+
+function Get-ReviewBrush([int]$r, [int]$g, [int]$b) {
+    return [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, $r, $g, $b))
+}
+
+function Format-ReviewGap([string]$dueAt) {
+    if ([string]::IsNullOrWhiteSpace($dueAt)) { return '未排期' }
+    try {
+        $due = [datetime]::Parse($dueAt)
+        $ms = ($due - (Get-Date)).TotalMilliseconds
+        if ($ms -lt 0) { return '已逾期' }
+        $min = [math]::Round($ms / 60000)
+        if ($min -lt 60) { return "$min 分钟" }
+        $hour = [math]::Round($min / 60)
+        if ($hour -lt 48) { return "$hour 小时" }
+        return "$([math]::Round($hour / 24)) 天"
+    }
+    catch { return '' }
+}
+
+function Add-ReviewDivider($stack, $inkLine, $gold, [double]$width) {
+    $row = [System.Windows.Controls.Grid]::new()
+    $row.Height = [double]22
+    $c1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $c2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $c3 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c3.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    [void]$row.ColumnDefinitions.Add($c1)
+    [void]$row.ColumnDefinitions.Add($c2)
+    [void]$row.ColumnDefinitions.Add($c3)
+
+    $left = [System.Windows.Controls.Border]::new()
+    $left.Height = 1
+    $left.Background = $inkLine
+    $left.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    $left.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    [System.Windows.Controls.Grid]::SetColumn($left, 0)
+    [void]$row.Children.Add($left)
+
+    $dia = [System.Windows.Controls.Border]::new()
+    $dia.Width = 7
+    $dia.Height = 7
+    $dia.Background = $gold
+    $dia.LayoutTransform = [System.Windows.Media.RotateTransform]::new(45)
+    [System.Windows.Controls.Grid]::SetColumn($dia, 1)
+    [void]$row.Children.Add($dia)
+
+    $right = [System.Windows.Controls.Border]::new()
+    $right.Height = 1
+    $right.Background = $inkLine
+    $right.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    $right.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    [System.Windows.Controls.Grid]::SetColumn($right, 2)
+    [void]$row.Children.Add($right)
+
+    [void]$stack.Children.Add($row)
+}
+
+function Add-ReviewSection($stack, [string]$label, $color, $ink) {
+    $sp = [System.Windows.Controls.StackPanel]::new()
+    $sp.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $sp.Margin = [System.Windows.Thickness]::new(0, 10, 0, 4)
+
+    $dot = [System.Windows.Controls.Border]::new()
+    $dot.Width = 5
+    $dot.Height = 5
+    $dot.Background = $color
+    $dot.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $dot.Margin = [System.Windows.Thickness]::new(0, 0, 6, 0)
+    [void]$sp.Children.Add($dot)
+
+    $tb = [System.Windows.Controls.TextBlock]::new()
+    $tb.Text = $label
+    $tb.FontSize = 10
+    $tb.Foreground = $color
+    $tb.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+    [void]$sp.Children.Add($tb)
+    [void]$stack.Children.Add($sp)
+}
+
+function Add-ReviewRow($stack, $card, $ink, $dim, $red, $blue, $green, $line) {
+    $row = [System.Windows.Controls.Grid]::new()
+    $row.Margin = [System.Windows.Thickness]::new(0, 0, 0, 2)
+    $row.Background = [System.Windows.Media.Brushes]::Transparent
+    $c0 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c0.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $c1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $c2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $c2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$row.ColumnDefinitions.Add($c0)
+    [void]$row.ColumnDefinitions.Add($c1)
+    [void]$row.ColumnDefinitions.Add($c2)
+
+    $bar = [System.Windows.Controls.Border]::new()
+    $bar.Width = 3
+    $bar.Margin = [System.Windows.Thickness]::new(0, 3, 8, 3)
+    $bar.Background = switch ([string]$card.state) {
+        'learning' { $blue }
+        'relearning' { $red }
+        default { if ([string]::IsNullOrWhiteSpace($card.dueAt)) { $line } elseif ((Format-ReviewGap $card.dueAt) -eq '已逾期') { $red } else { $blue } }
+    }
+    [System.Windows.Controls.Grid]::SetColumn($bar, 0)
+    [void]$row.Children.Add($bar)
+
+    $mid = [System.Windows.Controls.StackPanel]::new()
+    $t = [System.Windows.Controls.TextBlock]::new()
+    $t.Text = [string]$card.prompt
+    $t.FontSize = 12.5
+    $t.TextWrapping = [System.Windows.TextWrapping]::NoWrap
+    $t.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+    $t.Foreground = $ink
+    $t.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+    [void]$mid.Children.Add($t)
+
+    $sub = [System.Windows.Controls.TextBlock]::new()
+    $goalText = [string]$card.goalText
+    $sText = ('S {0:0.0} 天' -f [double]$card.S)
+    $sub.Text = if ($goalText) { "$goalText · $sText" } else { $sText }
+    $sub.FontSize = 9.5
+    $sub.Foreground = $dim
+    $sub.Margin = [System.Windows.Thickness]::new(0, 2, 0, 0)
+    $sub.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+    [void]$mid.Children.Add($sub)
+    [System.Windows.Controls.Grid]::SetColumn($mid, 1)
+    [void]$row.Children.Add($mid)
+
+    $gap = [System.Windows.Controls.TextBlock]::new()
+    $gapText = Format-ReviewGap $card.dueAt
+    $gap.Text = $gapText
+    $gap.FontSize = 10
+    $gap.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $gap.Margin = [System.Windows.Thickness]::new(8, 0, 0, 0)
+    $gap.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+    $gap.Foreground = if ($gapText -eq '已逾期') { $red } else { $dim }
+    [System.Windows.Controls.Grid]::SetColumn($gap, 2)
+    [void]$row.Children.Add($gap)
+
+    $row.Cursor = [System.Windows.Input.Cursors]::Hand
+    $row.ToolTip = '点这一行开始复习'
+    $row.Tag = [string]$card.id
+    $row.Add_MouseEnter({ param($s, $e) $s.Background = Get-ReviewBrush 239 232 218 })
+    $row.Add_MouseLeave({ param($s, $e) $s.Background = [System.Windows.Media.Brushes]::Transparent })
+    $row.Add_MouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            $script:ReviewCardId = [string]$s.Tag
+            Rebuild-ReviewPanel
+        })
+    [void]$stack.Children.Add($row)
+}
+
+function Add-ReviewTabs {
+    if ($null -eq $script:ReviewTabs) { return }
+    $tabs = $script:ReviewTabs
+    $tabs.Children.Clear()
+    $dim = Get-ReviewBrush 138 129 117
+    $blue = Get-ReviewBrush 46 74 107
+    foreach ($v in @(@('日', 'day'), @('周', 'week'), @('月', 'month'))) {
+        $tb = [System.Windows.Controls.Border]::new()
+        $tb.Padding = [System.Windows.Thickness]::new(9, 2, 9, 2)
+        $tb.Margin = [System.Windows.Thickness]::new(0, 0, 4, 0)
+        $tb.Cursor = [System.Windows.Input.Cursors]::Hand
+        $tb.Tag = [string]$v[1]
+        $tt = [System.Windows.Controls.TextBlock]::new()
+        $tt.Text = [string]$v[0]
+        $tt.FontSize = 10.5
+        $tt.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+        $tt.Foreground = $dim
+        $tb.Child = $tt
+        if ([string]$script:ReviewView -eq [string]$v[1]) {
+            $tb.BorderBrush = $blue
+            $tb.BorderThickness = [System.Windows.Thickness]::new(0, 0, 0, 1)
+            $tt.Foreground = $blue
+        }
+        $tb.Add_MouseLeftButtonUp({
+                param($s, $e)
+                $e.Handled = $true
+                $script:ReviewView = [string]$s.Tag
+                $script:ReviewCardId = $null
+                Rebuild-ReviewPanel
+            })
+        [void]$tabs.Children.Add($tb)
+    }
+}
+
+function Rebuild-ReviewPanel {
+    if ($null -eq $script:ReviewContent) { return }
+    $stack = $script:ReviewContent
+    $stack.Children.Clear()
+    Add-ReviewTabs
+
+    $ink = Get-ReviewBrush 43 38 34
+    $dim = Get-ReviewBrush 138 129 117
+    $red = Get-ReviewBrush 180 71 46
+    $blue = Get-ReviewBrush 46 74 107
+    $green = Get-ReviewBrush 90 107 74
+    $line = Get-ReviewBrush 201 191 168
+    $gold = Get-ReviewBrush 156 131 84
+    $paper = Get-ReviewBrush 246 241 231
+
+    $snap = Get-ReviewSnapshot
+
+    # ---- 卡片面 ----
+    if (-not [string]::IsNullOrWhiteSpace($script:ReviewCardId)) {
+        $card = $null
+        foreach ($list in @($snap.day.overdue) + @($snap.day.today) + @($snap.day.later) + @($snap.day.doneToday)) {
+            if ($null -ne $list -and [string]$list.id -eq [string]$script:ReviewCardId) { $card = $list; break }
+        }
+        $back = [System.Windows.Controls.TextBlock]::new()
+        $back.Text = '‹ 返回'
+        $back.FontSize = 11
+        $back.Foreground = $dim
+        $back.Cursor = [System.Windows.Input.Cursors]::Hand
+        $back.Margin = [System.Windows.Thickness]::new(0, 0, 0, 18)
+        $back.Add_MouseLeftButtonUp({
+                param($s, $e)
+                $e.Handled = $true
+                $script:ReviewCardId = $null
+                Rebuild-ReviewPanel
+            })
+        [void]$stack.Children.Add($back)
+
+        if ($null -eq $card) {
+            $empty = [System.Windows.Controls.TextBlock]::new()
+            $empty.Text = '这张卡不在今天的清单里'
+            $empty.FontSize = 12
+            $empty.Foreground = $dim
+            [void]$stack.Children.Add($empty)
+            return
+        }
+
+        $kicker = [System.Windows.Controls.TextBlock]::new()
+        $kicker.Text = if ($card.goalText) { "$($card.goalText)" } else { '复习' }
+        $kicker.FontSize = 10
+        $kicker.Foreground = $dim
+        $kicker.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+        $kicker.Margin = [System.Windows.Thickness]::new(0, 20, 0, 14)
+        [void]$stack.Children.Add($kicker)
+
+        $q = [System.Windows.Controls.TextBlock]::new()
+        $q.Text = [string]$card.prompt
+        $q.FontSize = 17
+        $q.LineHeight = 30
+        $q.TextAlignment = [System.Windows.TextAlignment]::Center
+        $q.TextWrapping = [System.Windows.TextWrapping]::Wrap
+        $q.Foreground = $ink
+        $q.FontFamily = [System.Windows.Media.FontFamily]::new('SimSun')
+        $q.Margin = [System.Windows.Thickness]::new(6, 0, 6, 30)
+        [void]$stack.Children.Add($q)
+
+        Add-ReviewDivider $stack $line $gold 300
+
+        $btns = [System.Windows.Controls.StackPanel]::new()
+        $btns.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+        $btns.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+        $btns.Margin = [System.Windows.Thickness]::new(0, 26, 0, 0)
+        foreach ($item in @(@('记得', 3, $green), @('模糊', 2, $blue), @('忘了', 1, $red))) {
+            $b = [System.Windows.Controls.Border]::new()
+            $b.BorderBrush = $line
+            $b.BorderThickness = [System.Windows.Thickness]::new(1)
+            $b.Padding = [System.Windows.Thickness]::new(16, 7, 16, 7)
+            $b.Margin = [System.Windows.Thickness]::new(8, 0, 8, 0)
+            $b.Cursor = [System.Windows.Input.Cursors]::Hand
+            $b.Tag = [int]$item[1]
+            $tb = [System.Windows.Controls.TextBlock]::new()
+            $tb.Text = [string]$item[0]
+            $tb.FontSize = 12
+            $tb.Foreground = $ink
+            $tb.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+            $b.Child = $tb
+            $b.Add_MouseEnter({ param($s, $e) $s.Background = Get-ReviewBrush 239 232 218 })
+            $b.Add_MouseLeave({ param($s, $e) $s.Background = [System.Windows.Media.Brushes]::Transparent })
+            $b.Add_MouseLeftButtonUp({
+                    param($s, $e)
+                    $e.Handled = $true
+                    $gid = [string]$script:ReviewCardId
+                    $grade = [int]$s.Tag
+                    try { Send-OverlayEvent @{ type = 'review_grade'; id = $gid; g = $grade; evId = [guid]::NewGuid().ToString('N') } } catch { }
+                    $script:ReviewCardId = $null
+                    Rebuild-ReviewPanel
+                })
+            [void]$btns.Children.Add($b)
+        }
+        [void]$stack.Children.Add($btns)
+
+        $info = [System.Windows.Controls.TextBlock]::new()
+        $info.Text = ('S {0:0.00} 天 · 记过 {1} 次 · 忘过 {2} 次' -f [double]$card.S, 0, [int]$card.lapses)
+        $info.FontSize = 9.5
+        $info.Foreground = $dim
+        $info.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+        $info.Margin = [System.Windows.Thickness]::new(0, 30, 0, 0)
+        $info.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+        [void]$stack.Children.Add($info)
+        return
+    }
+
+    # ---- 日视图 ----
+    if ($script:ReviewView -eq 'day') {
+        $d = $snap.day
+        if (@($d.overdue).Count -gt 0) {
+            Add-ReviewSection $stack ('已逾期 {0}' -f @($d.overdue).Count) $red $ink
+            foreach ($c in @($d.overdue)) { Add-ReviewRow $stack $c $ink $dim $red $blue $green $line }
+        }
+        if (@($d.today).Count -gt 0) {
+            Add-ReviewSection $stack ('今天到期 {0}' -f @($d.today).Count) $blue $ink
+            foreach ($c in @($d.today)) { Add-ReviewRow $stack $c $ink $dim $red $blue $green $line }
+        }
+        if (@($d.later).Count -gt 0) {
+            Add-ReviewSection $stack '以后' $dim $ink
+            foreach ($c in @($d.later)) { Add-ReviewRow $stack $c $ink $dim $red $blue $green $line }
+            if ([int]$d.laterMore -gt 0) {
+                $more = [System.Windows.Controls.TextBlock]::new()
+                $more.Text = ('还有 {0} 张' -f [int]$d.laterMore)
+                $more.FontSize = 9.5
+                $more.Foreground = $dim
+                $more.Margin = [System.Windows.Thickness]::new(11, 2, 0, 0)
+                [void]$stack.Children.Add($more)
+            }
+        }
+        if (@($d.overdue).Count -eq 0 -and @($d.today).Count -eq 0 -and @($d.later).Count -eq 0) {
+            $empty = [System.Windows.Controls.TextBlock]::new()
+            $empty.Text = '今天没有要复习的。'
+            $empty.FontSize = 12
+            $empty.Foreground = $dim
+            $empty.Margin = [System.Windows.Thickness]::new(0, 24, 0, 0)
+            $empty.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            [void]$stack.Children.Add($empty)
+            $hint = [System.Windows.Controls.TextBlock]::new()
+            $hint.Text = '学完一步会自动建卡'
+            $hint.FontSize = 9.5
+            $hint.Foreground = $dim
+            $hint.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            $hint.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+            [void]$stack.Children.Add($hint)
+        }
+        if (@($d.doneToday).Count -gt 0) {
+            Add-ReviewDivider $stack $line $gold 300
+            Add-ReviewSection $stack ('今天已复习 {0}' -f @($d.doneToday).Count) $green $ink
+            foreach ($c in @($d.doneToday)) {
+                $row = [System.Windows.Controls.TextBlock]::new()
+                $row.Text = ('○ {0}  {1}' -f (Format-ReviewGap $c.lastReviewAt), [string]$c.prompt)
+                $row.FontSize = 10.5
+                $row.Foreground = $dim
+                $row.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
+                $row.Margin = [System.Windows.Thickness]::new(0, 1, 0, 1)
+                $row.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+                [void]$stack.Children.Add($row)
+            }
+        }
+        return
+    }
+
+    # ---- 周视图 ----
+    if ($script:ReviewView -eq 'week') {
+        $w = $snap.week
+        $grid = [System.Windows.Controls.Grid]::new()
+        for ($i = 0; $i -lt 7; $i += 1) {
+            $cd = [System.Windows.Controls.ColumnDefinition]::new()
+            $cd.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            [void]$grid.ColumnDefinitions.Add($cd)
+        }
+        $idx = 0
+        foreach ($day in @($w.days)) {
+            $cell = [System.Windows.Controls.StackPanel]::new()
+            $cell.Margin = [System.Windows.Thickness]::new(2, 0, 2, 0)
+            $dow = [System.Windows.Controls.TextBlock]::new()
+            $dow.Text = '一二三四五六日'[[int](([datetime]::Parse($day.date)).DayOfWeek + 6) % 7]
+            $dow.FontSize = 9.5
+            $dow.Foreground = $dim
+            $dow.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            [void]$cell.Children.Add($dow)
+
+            $num = [System.Windows.Controls.TextBlock]::new()
+            $num.Text = [string]$day.count
+            $num.FontSize = 15
+            $num.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+            $num.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            $num.Margin = [System.Windows.Thickness]::new(0, 4, 0, 4)
+            $num.Foreground = if ([int]$day.count -gt 5) { $red } elseif ([int]$day.count -gt 0) { $ink } else { $dim }
+            [void]$cell.Children.Add($num)
+
+            $box = [System.Windows.Controls.Border]::new()
+            $box.Height = 2
+            $box.Background = if ([int]$day.count -gt 5) { $red } elseif ([int]$day.count -gt 0) { $blue } else { $line }
+            [void]$cell.Children.Add($box)
+
+            if ($day.date -eq $snap.date) { $cell.Background = Get-ReviewBrush 239 232 218 }
+            [System.Windows.Controls.Grid]::SetColumn($cell, $idx)
+            [void]$grid.Children.Add($cell)
+            $idx += 1
+        }
+        [void]$stack.Children.Add($grid)
+
+        $sum = [System.Windows.Controls.TextBlock]::new()
+        $sum.Text = ('本周到期 {0} 张 · 已复习 {1} 次' -f [int]$w.total, [int]$w.done)
+        $sum.FontSize = 10
+        $sum.Foreground = $dim
+        $sum.Margin = [System.Windows.Thickness]::new(0, 18, 0, 0)
+        $sum.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
+        [void]$stack.Children.Add($sum)
+
+        if (-not [string]::IsNullOrWhiteSpace([string]$w.suggestion)) {
+            $sg = [System.Windows.Controls.TextBlock]::new()
+            $sg.Text = [string]$w.suggestion
+            $sg.FontSize = 10
+            $sg.Foreground = $red
+            $sg.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $sg.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+            [void]$stack.Children.Add($sg)
+        }
+        return
+    }
+
+    # ---- 月视图 ----
+    if ($script:ReviewView -eq 'month') {
+        $m = $snap.month
+        $grid = [System.Windows.Controls.Grid]::new()
+        for ($i = 0; $i -lt 7; $i += 1) {
+            $cd = [System.Windows.Controls.ColumnDefinition]::new()
+            $cd.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            [void]$grid.ColumnDefinitions.Add($cd)
+        }
+        $rows = [math]::Ceiling((@($m.cells).Count) / 7)
+        for ($i = 0; $i -lt $rows; $i += 1) {
+            $rd = [System.Windows.Controls.RowDefinition]::new()
+            $rd.Height = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+            [void]$grid.RowDefinitions.Add($rd)
+        }
+        $i = 0
+        foreach ($cell in @($m.cells)) {
+            if ($null -ne $cell) {
+                $b = [System.Windows.Controls.Border]::new()
+                $b.Height = 40
+                $b.Margin = [System.Windows.Thickness]::new(1)
+                $b.BorderBrush = $line
+                $b.BorderThickness = [System.Windows.Thickness]::new(1)
+                if ($cell.date -eq $snap.date) { $b.BorderBrush = $blue; $b.BorderThickness = [System.Windows.Thickness]::new(2) }
+                $t = [System.Windows.Controls.TextBlock]::new()
+                $t.Text = if ([int]$cell.count -gt 0) { [string]$cell.count } else { '' }
+                $t.FontSize = 11
+                $t.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+                $t.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+                $t.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                $t.Foreground = if ([int]$cell.count -gt 5) { $red } elseif ([int]$cell.count -gt 0) { $ink } else { $dim }
+                $b.Child = $t
+                [System.Windows.Controls.Grid]::SetRow($b, [math]::Floor($i / 7))
+                [System.Windows.Controls.Grid]::SetColumn($b, $i % 7)
+                [void]$grid.Children.Add($b)
+            }
+            $i += 1
+        }
+        [void]$stack.Children.Add($grid)
+
+        $sum = [System.Windows.Controls.TextBlock]::new()
+        $sum.Text = ('本月到期 {0} · 已复习 {1} 次' -f [int]$m.total, [int]$m.done)
+        $sum.FontSize = 10
+        $sum.Foreground = $dim
+        $sum.Margin = [System.Windows.Thickness]::new(0, 18, 0, 0)
+        [void]$stack.Children.Add($sum)
+
+        if ([int]$m.peak.count -gt 0) {
+            $pk = [System.Windows.Controls.TextBlock]::new()
+            $pk.Text = ('最多是 {0}，{1} 张' -f ([string]$m.peak.date).Substring(5), [int]$m.peak.count)
+            $pk.FontSize = 10
+            $pk.Foreground = $red
+            $pk.Margin = [System.Windows.Thickness]::new(0, 4, 0, 0)
+            [void]$stack.Children.Add($pk)
+        }
+        return
+    }
+}
+
+function Show-ReviewWindow {
+    if ($null -ne $script:ReviewWindow) {
+        try { $script:ReviewWindow.Close() } catch { }
+        $script:ReviewWindow = $null
+    }
+    try { Send-OverlayEvent @{ type = 'review_open' } } catch { }
+
+    $script:ReviewView = 'day'
+    $script:ReviewCardId = $null
+    $script:ReviewFp = ''
+
+    $paper = Get-ReviewBrush 246 241 231
+    $paper2 = Get-ReviewBrush 237 230 216
+    $paper3 = Get-ReviewBrush 228 219 203
+    $ink = Get-ReviewBrush 43 38 34
+    $dim = Get-ReviewBrush 138 129 117
+    $red = Get-ReviewBrush 180 71 46
+    $blue = Get-ReviewBrush 46 74 107
+    $green = Get-ReviewBrush 90 107 74
+    $line = Get-ReviewBrush 201 191 168
+    $gold = Get-ReviewBrush 156 131 84
+
+    $win = [System.Windows.Window]::new()
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Width = 452
+    $win.Height = 700
+    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $win.Topmost = $true
+    $win.ShowInTaskbar = $false
+    $script:ReviewWindow = $win
+
+    $root = [System.Windows.Controls.Grid]::new()
+    $win.Content = $root
+
+    # 后面两层纸（错位出厚度）
+    $p3 = [System.Windows.Controls.Border]::new()
+    $p3.Background = $paper3
+    $p3.BorderBrush = Get-ReviewBrush 185 173 150
+    $p3.BorderThickness = [System.Windows.Thickness]::new(1)
+    $p3.Margin = [System.Windows.Thickness]::new(12, 12, 0, 0)
+    [void]$root.Children.Add($p3)
+
+    $p2 = [System.Windows.Controls.Border]::new()
+    $p2.Background = $paper2
+    $p2.BorderBrush = Get-ReviewBrush 185 173 150
+    $p2.BorderThickness = [System.Windows.Thickness]::new(1)
+    $p2.Margin = [System.Windows.Thickness]::new(6, 6, 0, 0)
+    [void]$root.Children.Add($p2)
+
+    $p1 = [System.Windows.Controls.Border]::new()
+    $p1.Background = $paper
+    $p1.BorderBrush = Get-ReviewBrush 185 173 150
+    $p1.BorderThickness = [System.Windows.Thickness]::new(1)
+    $p1.Margin = [System.Windows.Thickness]::new(0, 0, 12, 12)
+    [void]$root.Children.Add($p1)
+
+    $grid = [System.Windows.Controls.Grid]::new()
+    $grid.Margin = [System.Windows.Thickness]::new(28, 22, 20, 16)
+    $r1 = [System.Windows.Controls.RowDefinition]::new()
+    $r1.Height = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    $r2 = [System.Windows.Controls.RowDefinition]::new()
+    $r2.Height = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $r3 = [System.Windows.Controls.RowDefinition]::new()
+    $r3.Height = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$grid.RowDefinitions.Add($r1)
+    [void]$grid.RowDefinitions.Add($r2)
+    [void]$grid.RowDefinitions.Add($r3)
+    $p1.Child = $grid
+
+    # ---- 页眉 ----
+    $head = [System.Windows.Controls.StackPanel]::new()
+    $head.Background = [System.Windows.Media.Brushes]::Transparent
+    [System.Windows.Controls.Grid]::SetRow($head, 0)
+    [void]$grid.Children.Add($head)
+
+    $titleRow = [System.Windows.Controls.Grid]::new()
+    [void]$head.Children.Add($titleRow)
+    $tc1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $tc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $tc2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $tc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$titleRow.ColumnDefinitions.Add($tc1)
+    [void]$titleRow.ColumnDefinitions.Add($tc2)
+
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $snapNow = Get-ReviewSnapshot
+    $title.Text = if ($snapNow.date) { $snapNow.date } else { (Get-Date).ToString('yyyy-MM-dd') }
+    $title.FontSize = 20
+    $title.FontFamily = [System.Windows.Media.FontFamily]::new('SimSun')
+    $title.Foreground = $ink
+    $title.ToolTip = '按住这里可以拖动'
+    $title.Add_MouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try { $script:ReviewWindow.DragMove() } catch { }
+        })
+    [System.Windows.Controls.Grid]::SetColumn($title, 0)
+    [void]$titleRow.Children.Add($title)
+
+    $close = [System.Windows.Controls.TextBlock]::new()
+    $close.Text = '✕'
+    $close.FontSize = 12
+    $close.Foreground = $dim
+    $close.Cursor = [System.Windows.Input.Cursors]::Hand
+    $close.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $close.Add_MouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            try { $script:ReviewWindow.Close() } catch { }
+            $script:ReviewWindow = $null
+        })
+    [System.Windows.Controls.Grid]::SetColumn($close, 1)
+    [void]$titleRow.Children.Add($close)
+
+    $dblLine = [System.Windows.Controls.Border]::new()
+    $dblLine.Height = 1
+    $dblLine.Background = $ink
+    $dblLine.Margin = [System.Windows.Thickness]::new(0, 6, 0, 0)
+    [void]$head.Children.Add($dblLine)
+    $thin = [System.Windows.Controls.Border]::new()
+    $thin.Height = 1
+    $thin.Background = $line
+    $thin.Margin = [System.Windows.Thickness]::new(0, 1, 0, 0)
+    [void]$head.Children.Add($thin)
+
+    $subRow = [System.Windows.Controls.Grid]::new()
+    $subRow.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
+    [void]$head.Children.Add($subRow)
+    $sc1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $sc1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $sc2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $sc2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$subRow.ColumnDefinitions.Add($sc1)
+    [void]$subRow.ColumnDefinitions.Add($sc2)
+
+    $tabs = [System.Windows.Controls.StackPanel]::new()
+    $tabs.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    [System.Windows.Controls.Grid]::SetColumn($tabs, 0)
+    [void]$subRow.Children.Add($tabs)
+    $script:ReviewTabs = $tabs
+    Add-ReviewTabs
+
+    $stat = [System.Windows.Controls.TextBlock]::new()
+    $stat.Text = ('共 {0} 张 · 今天 {1}' -f [int]$snapNow.stats.total, [int]$snapNow.stats.dueToday)
+    $stat.FontSize = 9.5
+    $stat.Foreground = $dim
+    $stat.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $stat.FontFamily = [System.Windows.Media.FontFamily]::new('Georgia')
+    [System.Windows.Controls.Grid]::SetColumn($stat, 1)
+    [void]$subRow.Children.Add($stat)
+
+    # ---- 页脚印章（右上角，旋转 3 度）----
+    $seal = [System.Windows.Controls.Border]::new()
+    $seal.Width = 26
+    $seal.Height = 26
+    $seal.BorderBrush = $red
+    $seal.BorderThickness = [System.Windows.Thickness]::new(1.4)
+    $seal.CornerRadius = [System.Windows.CornerRadius]::new(2)
+    $seal.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $seal.VerticalAlignment = [System.Windows.VerticalAlignment]::Top
+    $seal.Margin = [System.Windows.Thickness]::new(0, 12, 28, 0)
+    $seal.LayoutTransform = [System.Windows.Media.RotateTransform]::new(-3)
+    $seal.Opacity = 0.85
+    $seal.IsHitTestVisible = $false
+    $sealText = [System.Windows.Controls.TextBlock]::new()
+    $sealText.Text = '复'
+    $sealText.FontSize = 13
+    $sealText.FontFamily = [System.Windows.Media.FontFamily]::new('SimSun')
+    $sealText.Foreground = $red
+    $sealText.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $sealText.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $seal.Child = $sealText
+    [void]$root.Children.Add($seal)
+
+    # ---- 内容区 ----
+    $scroll = [System.Windows.Controls.ScrollViewer]::new()
+    $scroll.VerticalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Auto
+    $scroll.HorizontalScrollBarVisibility = [System.Windows.Controls.ScrollBarVisibility]::Disabled
+    $scroll.Margin = [System.Windows.Thickness]::new(0, 10, 0, 4)
+    [System.Windows.Controls.Grid]::SetRow($scroll, 1)
+    [void]$grid.Children.Add($scroll)
+
+    $content = [System.Windows.Controls.StackPanel]::new()
+    $scroll.Content = $content
+    $script:ReviewContent = $content
+
+    # ---- 页脚 ----
+    $foot = [System.Windows.Controls.TextBlock]::new()
+    $foot.Text = '— 复习本 —'
+    $foot.FontSize = 9
+    $foot.Foreground = $dim
+    $foot.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+    $foot.FontFamily = [System.Windows.Media.FontFamily]::new('SimSun')
+    [System.Windows.Controls.Grid]::SetRow($foot, 2)
+    [void]$grid.Children.Add($foot)
+
+    Rebuild-ReviewPanel
+    $win.Show()
+    $script:LastOverlayLog = "[{0:HH:mm:ss.fff}] review window opened" -f (Get-Date)
+    try { Add-Content -Path $script:LogPath -Value ("[{0:HH:mm:ss.fff}] review window opened" -f (Get-Date)) -Encoding UTF8 } catch { }
+}
+
 function Show-DispatchWindow {
     if ($null -ne $script:DispatchWindow) {
         try { $script:DispatchWindow.Close() } catch { }
@@ -3168,6 +3861,15 @@ function New-PanelWindow {
         try { Show-GoalsWindow } catch { Write-Log ('goals window failed: ' + $_.Exception.Message + ' @line ' + $_.InvocationInfo.ScriptLineNumber) }
     })
     [void]$headerButtons.Children.Add($goals)
+
+    $reviewBtn = New-GTextButton '复习' '打开复习本：今天该复习什么、这周负荷、这个月的记忆'
+    $reviewBtn.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
+    $reviewBtn.Add_PreviewMouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            try { Show-ReviewWindow } catch { Write-Log ('review window failed: ' + $_.Exception.Message + ' @line ' + $_.InvocationInfo.ScriptLineNumber) }
+        })
+    [void]$headerButtons.Children.Add($reviewBtn)
 
     # 大小用滑块调（在 footer 下方单独一行），这里不再放按钮。
 
@@ -6267,6 +6969,20 @@ function Update-TopBar($state) {
 function Apply-State($state) {
     if ($null -eq $state) { return }
     $script:LastState = $state
+
+    # 复习本：数据一变就重画（窗口开着的时候），否则打完一张卡界面还停在旧数字上。
+    try {
+        if ($null -ne $state.review -and $null -ne $script:ReviewWindow -and $script:ReviewWindow.IsVisible) {
+            $rv = $state.review
+            $fp = '{0}|{1}|{2}|{3}|{4}' -f [string]$rv.date, [int]$rv.stats.total, [int]$rv.stats.dueToday, [int]$rv.stats.overdue, @($rv.day.doneToday).Count
+            if ($fp -ne $script:ReviewFp) {
+                $script:ReviewFp = $fp
+                Rebuild-ReviewPanel
+            }
+        }
+    }
+    catch { }
+
     $panel = $state.panel
     if ($null -eq $panel) { return }
 
@@ -6626,6 +7342,7 @@ if ($script:Mode -eq '') {
 
 Send-OverlayEvent @{ type = 'ready'; pid = $PID }
 Write-Log 'overlay started'
+
 
 $timer = [System.Windows.Threading.DispatcherTimer]::new()
 $timer.Interval = [TimeSpan]::FromMilliseconds(120)

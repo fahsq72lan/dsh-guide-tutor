@@ -19,6 +19,17 @@ import { askLabel } from './lib/l1.js'
 import { createGoals } from './lib/goals.js'
 import { createSkill } from './lib/skill.js'
 import {
+  createReviewStore,
+  dayView as reviewDayView,
+  weekView as reviewWeekView,
+  monthView as reviewMonthView,
+  stats as reviewStats,
+  dueTodayCards,
+  dateKeyOf as reviewDateKey,
+  weekStartOf as reviewWeekStart,
+  GRADE as REVIEW_GRADE,
+} from './lib/review-store.js'
+import {
   STEP_STATUS,
   GOAL_STATUS,
   goalProgress,
@@ -727,6 +738,49 @@ async function handleEvent(event) {
         // 置 false，点完垃圾桶整个助手就"消失"了）。
         log('clear annots requested from overlay')
         writeState({ annots: [], captureMode: false })
+        break
+      }
+      case 'review_open': {
+        // 复习窗口打开 / 用户在里面做了动作：把最新快照推过去
+        try {
+          pushReviewState()
+          log('review state pushed')
+        } catch (error) {
+          log(`review push failed: ${error?.message ?? error}`)
+        }
+        break
+      }
+      case 'review_grade': {
+        // 复习窗口里点了「记得/模糊/忘了」
+        const id = String(event.id || '').trim()
+        const g = Number(event.g)
+        if (!id || ![1, 2, 3].includes(g)) break
+        try {
+          const r = review.grade(id, g, Date.now(), String(event.evId || '') || null)
+          if (r.ok && !r.skipped) {
+            const label = { 1: '忘了', 2: '模糊', 3: '记得' }[g]
+            appendDaylog('activity', `复习：${String(r.card.title || id).slice(0, 20)} · ${label}`)
+            log(`review graded: ${id} g=${g} S=${Number(r.card.S).toFixed(2)}`)
+          } else if (!r.ok) {
+            log(`review grade rejected: ${r.error}`)
+          }
+          pushReviewState()
+        } catch (error) {
+          log(`review grade failed: ${error?.message ?? error}`)
+        }
+        break
+      }
+      case 'review_add': {
+        try {
+          const prompt = String(event.prompt || '').trim()
+          if (prompt) {
+            review.add({ prompt, title: prompt.slice(0, 20), goalId: String(event.goalId || '') || null })
+            appendDaylog('activity', `建复习卡：${prompt.slice(0, 24)}`)
+          }
+          pushReviewState()
+        } catch (error) {
+          log(`review add failed: ${error?.message ?? error}`)
+        }
         break
       }
       case 'chore_done': {
@@ -2608,6 +2662,7 @@ async function handleEvent(event) {
   // 只在真的发令/催办时叫模型，其余时间不动 token。
   const goals = createGoals({ dataDir, log })
   const skill = createSkill({ dataDir, log })
+  const review = createReviewStore({ dataDir, log })
   const goalsPath = goals.file
 
   function readGoals() {
@@ -2615,6 +2670,7 @@ async function handleEvent(event) {
   }
 
   // 目标看板以外，拆解状态只有这里能改：勾一步 → 记进 user-skill 的档。
+  // 叶子步骤勾完成时顺带建一张复习卡（组步不建，它的孩子才是叶子）。
   function onGoalStepChange({ stepId, title, done, outcome = '' }) {
     if (!stepId) return null
     try {
@@ -2632,6 +2688,18 @@ async function handleEvent(event) {
           plannedUnits: step.units,
           actualUnits: step.units,
         })
+        // 只给叶子建卡：有子步骤的组步本身不建
+        if (done && !Array.isArray(step.children) && step.status === STEP_STATUS.DONE) {
+          review.add({
+            stepId: step.stepId,
+            goalId,
+            milestoneId: goal.milestones.find((m) => m.steps.some((s) => s.stepId === step.stepId))?.id,
+            title: step.title,
+            prompt: `${step.title}｜${step.check || step.product || ''}`.slice(0, 120),
+            product: step.product,
+            kind: step.kind,
+          })
+        }
       }
       appendDaylog(
         'activity',
@@ -2720,6 +2788,60 @@ async function handleEvent(event) {
   }
 
   // 杂务的今日视图推进 state，看板与清单用的是同一份事实。
+  // 复习窗口要用的数据（只读快照，窗口自己按需再拉）
+  function reviewBrief(card, goalMap) {
+    return {
+      id: card.id,
+      title: card.title,
+      prompt: card.prompt,
+      state: card.state,
+      S: Number(card.S || 0),
+      dueAt: card.dueAt || '',
+      lastReviewAt: card.lastReviewAt || '',
+      lapses: Number(card.lapses || 0),
+      goalText: goalMap[card.goalId] || '',
+    }
+  }
+
+  function pushReviewState(dateKey = todayKey(new Date())) {
+    const nowMs = Date.now()
+    const cards = review.list()
+    const goalMap = {}
+    try {
+      for (const g of goals.read()) goalMap[g.id] = String(g.text || '').slice(0, 8)
+    } catch (error) {
+      log(`review goal map failed: ${error?.message ?? error}`)
+    }
+    const day = reviewDayView(cards, dateKey, nowMs)
+    const week = reviewWeekView(cards, reviewWeekStart(dateKey))
+    const month = reviewMonthView(cards, dateKey.slice(0, 7))
+    const snapshot = {
+      date: dateKey,
+      stats: reviewStats(cards, nowMs),
+      day: {
+        overdue: day.overdue.map((c) => reviewBrief(c, goalMap)),
+        today: day.today.map((c) => reviewBrief(c, goalMap)),
+        later: day.later.map((c) => reviewBrief(c, goalMap)),
+        laterMore: day.laterMore,
+        doneToday: day.doneToday.map((c) => reviewBrief(c, goalMap)),
+      },
+      week: {
+        days: week.days,
+        total: week.total,
+        done: week.done,
+        suggestion: week.suggestion,
+      },
+      month: {
+        cells: month.cells,
+        total: month.total,
+        done: month.done,
+        peak: month.peak,
+      },
+    }
+    writeState({ review: snapshot })
+    return snapshot
+  }
+
   function pushChoreState(dateKey = todayKey(new Date())) {
     const day = choreDay(dateKey)
     const items = day.due.map((c) => {
@@ -2960,6 +3082,194 @@ async function handleEvent(event) {
       if (result?.ok) removed.push(item)
     }
     return removed
+  }
+
+  function reviewDueText(card, now = Date.now()) {
+    if (!card?.dueAt) return card?.state === 'leech' ? '已挂起（反复忘）' : '未排期'
+    const ms = new Date(card.dueAt).getTime() - now
+    if (ms < 0) return '已逾期'
+    const min = Math.round(ms / 60000)
+    if (min < 60) return `${min} 分钟`
+    const hour = Math.round(min / 60)
+    if (hour < 48) return `${hour} 小时`
+    return `${Math.round(hour / 24)} 天`
+  }
+
+  function reviewCardLine(card, now = Date.now()) {
+    const pct = Math.round((card.S ? 0.9 : 0.9) * 100)
+    const s = Number(card.S || 0).toFixed(1)
+    const flag = card.state === 'leech' ? ' [反复忘]' : card.state === 'suspended' ? ' [挂起]' : ''
+    return `${reviewDueText(card, now).padEnd(8)} ${String(card.prompt || card.title || '').slice(0, 18)} · S ${s} 天 · ${pct}%${flag}`
+  }
+
+  const guideReviewTool = {
+    name: 'guide_review',
+    description:
+      '复习卡（艾宾浩斯遗忘曲线）：学完的叶子步骤会自动建卡，到期后按「记得/模糊/忘了」重算下次时间。list=全部卡带倒计时；stats=总体数字；day=某天该复习什么；week=某周七天负荷；month=某月日历；add=手工建卡（prompt 是题面，如「に和で怎么区分」）；grade=做完一张（g=1 忘了 / 2 模糊 / 3 记得）；backfill=给已完成的目标步骤补建卡；suspend/resume=挂起/恢复某个目标的卡；remove=删卡。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', description: 'list / stats / day / week / month / add / grade / backfill / suspend / resume / remove' },
+        id: { type: 'string', description: 'grade/remove：卡 id，如 r-g4-m1-s1' },
+        g: { type: 'number', description: 'grade：1 忘了 / 2 模糊 / 3 记得' },
+        date: { type: 'string', description: 'day/week/month：日期 YYYY-MM-DD，默认今天' },
+        prompt: { type: 'string', description: 'add：题面，要具体，如「に和で怎么区分」' },
+        title: { type: 'string', description: 'add：卡片标题（默认为题面前 20 字）' },
+        goalId: { type: 'string', description: 'add/suspend/resume：目标 id' },
+        stepId: { type: 'string', description: 'add：挂到哪个步骤（可选）' },
+      },
+    },
+    output: {
+      schema: { type: 'object', additionalProperties: true },
+      render: (args, value) => {
+        if (!value || value.ok === false) {
+          return [{ type: 'text', text: `没成：${value?.error || '未知原因'}` }]
+        }
+        const lines = []
+        if (value.title) lines.push(value.title)
+        if (Array.isArray(value.lines)) lines.push(...value.lines)
+        return [{ type: 'text', text: lines.length ? lines.join('\n') : '好了' }]
+      },
+    },
+    async execute(args = {}) {
+      const action = String(args.action || 'list')
+      const now = Date.now()
+      const dateKey = String(args.date || '').trim() || todayKey(new Date())
+      try {
+        if (action === 'add') {
+          const prompt = String(args.prompt || '').trim()
+          if (!prompt) return { ok: false, error: '题面不能空' }
+          const r = review.add({
+            prompt,
+            title: String(args.title || '').trim() || prompt.slice(0, 20),
+            goalId: String(args.goalId || '').trim() || null,
+            stepId: String(args.stepId || '').trim() || null,
+          })
+          appendDaylog('activity', `建复习卡：${prompt.slice(0, 24)}`)
+          return {
+            ok: true,
+            title: r.created ? '建好了' : '更新了已有卡的题面',
+            lines: [`${r.id} · ${prompt.slice(0, 24)}`, `总共 ${r.total} 张卡`],
+          }
+        }
+
+        if (action === 'grade') {
+          const id = String(args.id || '').trim()
+          const g = Number(args.g)
+          if (!id) return { ok: false, error: '要卡的 id' }
+          if (![1, 2, 3].includes(g)) return { ok: false, error: 'g 只能是 1/2/3' }
+          const r = review.grade(id, g)
+          if (!r.ok) return { ok: false, error: r.error }
+          const c = r.card
+          const label = { 1: '忘了', 2: '模糊', 3: '记得' }[g]
+          appendDaylog('activity', `复习：${String(c.title || '').slice(0, 20)} · ${label}`)
+          return {
+            ok: true,
+            title: `${label} · 下次 ${reviewDueText(c)}`,
+            lines: [
+              `S ${Number(c.S).toFixed(2)} 天 · 已记 ${c.reps || 0} 次 · 忘过 ${c.lapses || 0} 次`,
+              c.dueAt ? `到期：${new Date(c.dueAt).toLocaleString('zh-CN')}` : '已移出队列（反复忘，需人工处理）',
+            ],
+          }
+        }
+
+        if (action === 'stats') {
+          const s = reviewStats(review.list(), now)
+          return {
+            ok: true,
+            title: '复习总量',
+            lines: [
+              `记忆量 ${s.total} 张 · 平均牢固 ${s.avgS.toFixed(1)} 天`,
+              `今天到期 ${s.dueToday} · 已逾期 ${s.overdue} · 反复忘 ${s.leech} · 挂起 ${s.suspended}`,
+            ],
+          }
+        }
+
+        if (action === 'day') {
+          const v = reviewDayView(review.list(), dateKey, now)
+          const lines = []
+          if (v.overdue.length) lines.push(`— 已逾期 ${v.overdue.length} —`, ...v.overdue.map((c) => reviewCardLine(c, now)))
+          if (v.today.length) lines.push(`— 今天到期 ${v.today.length} —`, ...v.today.map((c) => reviewCardLine(c, now)))
+          if (v.later.length) lines.push(`— 以后 —`, ...v.later.map((c) => reviewCardLine(c, now)))
+          if (v.laterMore) lines.push(`以后还有 ${v.laterMore} 张`)
+          if (!lines.length) lines.push('这天没有要复习的')
+          if (v.doneToday.length) lines.push(`— 已复习 ${v.doneToday.length} —`, ...v.doneToday.map((c) => reviewCardLine(c, now)))
+          return { ok: true, title: `${dateKey} 复习`, lines }
+        }
+
+        if (action === 'week') {
+          const ws = reviewWeekStart(dateKey)
+          const v = reviewWeekView(review.list(), ws)
+          const lines = v.days.map((d) => `${d.date.slice(5)} 周${'一二三四五六日'[new Date(d.date + 'T00:00:00').getDay() === 0 ? 6 : new Date(d.date + 'T00:00:00').getDay() - 1]} ${String(d.count).padStart(2)} 张 ${d.titles.join(' / ')}`)
+          lines.push(`合计 ${v.total} 张 · 本周已复习 ${v.done} 次`)
+          if (v.suggestion) lines.push(v.suggestion)
+          return { ok: true, title: `${ws} 起这一周`, lines }
+        }
+
+        if (action === 'month') {
+          const monthKey = dateKey.slice(0, 7)
+          const v = reviewMonthView(review.list(), monthKey)
+          const lines = []
+          const rows = []
+          for (const c of v.cells) {
+            if (!c) { rows.push('··'); continue }
+            rows.push(c.count ? (c.count > 5 ? `[${c.count}]` : String(c.count).padStart(2)) : '  ')
+          }
+          for (let i = 0; i < rows.length; i += 7) lines.push(rows.slice(i, i + 7).join(' '))
+          lines.push(`本月到期 ${v.total} · 已复习 ${v.done} 次 · 最多是 ${v.peak.date.slice(5)}（${v.peak.count} 张）`)
+          return { ok: true, title: `${monthKey} 日历（日一到日）`, lines }
+        }
+
+        if (action === 'backfill') {
+          const all = goals.read()
+          let created = 0
+          for (const goal of all) {
+            for (const m of goal.milestones || []) {
+              for (const st of m.steps || []) {
+                if (Array.isArray(st.children) && st.children.length) continue
+                if (st.status !== STEP_STATUS.DONE) continue
+                const r = review.add({
+                  stepId: st.stepId, goalId: goal.id, milestoneId: m.id,
+                  title: st.title, prompt: `${st.title}｜${st.check || st.product || ''}`.slice(0, 120),
+                  product: st.product, kind: st.kind,
+                })
+                if (r.created) created += 1
+              }
+            }
+          }
+          return { ok: true, title: `补建 ${created} 张卡`, lines: [`总共 ${review.list().length} 张`] }
+        }
+
+        if (action === 'suspend' || action === 'resume') {
+          const gid = String(args.goalId || '').trim()
+          if (!gid) return { ok: false, error: '要给 goalId' }
+          const r = action === 'suspend' ? review.suspendGoal(gid) : review.resumeGoal(gid)
+          return { ok: true, title: `${action === 'suspend' ? '挂起' : '恢复'} ${r.suspended ?? r.resumed} 张` }
+        }
+
+        if (action === 'remove') {
+          const r = review.remove(String(args.id || '').trim())
+          return { ok: true, title: `删了 ${r.removed} 张` }
+        }
+
+        // list
+        const cards = review.list()
+        const s = reviewStats(cards, now)
+        const lines = cards
+          .slice()
+          .sort((a, b) => String(a.dueAt || '9') .localeCompare(String(b.dueAt || '9')))
+          .map((c) => `${c.id.padEnd(12)} ${reviewCardLine(c, now)}`)
+        if (!lines.length) lines.push('还没有卡。学完一步会自动建，也可以 guide_review add 手工建。')
+        return {
+          ok: true,
+          title: `复习 · 共 ${s.total} 张 · 今天到期 ${s.dueToday} · 逾期 ${s.overdue}`,
+          lines,
+        }
+      } catch (error) {
+        log(`guide_review failed: ${error?.message ?? error}`)
+        return { ok: false, error: error?.message ?? String(error) }
+      }
+    },
   }
 
   const guideChoresTool = {
@@ -3549,6 +3859,13 @@ async function handleEvent(event) {
         log(`drop goal item failed: ${error?.message ?? error}`)
       }
     }
+    // 这个目标的复习卡挂起而不是删掉：以后 backfill 还能恢复
+    try {
+      const r = review.suspendGoal(gid)
+      if (r.suspended) log(`review cards suspended for ${gid}: ${r.suspended}`)
+    } catch (error) {
+      log(`suspend review cards failed: ${error?.message ?? error}`)
+    }
     return cleared
   }
 
@@ -4123,6 +4440,7 @@ async function handleEvent(event) {
   ctx.effect(() => registerTool(guideGoalTool))
   // 杂务：每天那些琐碎事，独立于目标，但要占真实时间。
   ctx.effect(() => registerTool(guideChoresTool))
+  ctx.effect(() => registerTool(guideReviewTool))
   if (manage) {
     ctx.effect(() => registerTool(guideClockTool))
     ctx.effect(() => registerTool(guideJournalTool))
@@ -4178,6 +4496,11 @@ async function handleEvent(event) {
           const minuteOfDay = now.getHours() * 60 + now.getMinutes()
           if (minuteOfDay % 5 === 0) {
             pushChoreState(key)
+            try {
+              pushReviewState(key)
+            } catch (error) {
+              log(`review push failed: ${error?.message ?? error}`)
+            }
             writeState({ dispatchUnits: Number(speechSettings.dispatchUnits) || 0 })
           }
           if (choreAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
