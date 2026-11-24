@@ -1672,7 +1672,7 @@ async function handleEvent(event) {
   // Caption size and speaking volume live in the data directory so they survive
   // a restart without touching the profile patch.
   const settingsPath = path.join(dataDir, 'settings.json')
-  const DEFAULT_SPEECH = { subtitleSize: 24, volume: 90, rate: Number(config.speechRate) || 0 }
+  const DEFAULT_SPEECH = { subtitleSize: 24, volume: 90, rate: Number(config.speechRate) || 0, planReminders: true }
   let speechSettings = { ...DEFAULT_SPEECH }
   try {
     speechSettings = { ...DEFAULT_SPEECH, ...JSON.parse(fs.readFileSync(settingsPath, 'utf8')) }
@@ -2701,6 +2701,7 @@ async function handleEvent(event) {
     speak: speakText,
     onStepDone: onGoalStepChange,
     onChoreDone: (info) => onChoreDone(info),
+    planRemindersEnabled: () => speechSettings.planReminders !== false,
   })
   const guidePlanTool = plan.tool
 

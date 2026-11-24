@@ -3658,3 +3658,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **说明**
 今天已有的 6 条 g1 步骤手工补了 `auto: true`（它们是旧版派发生成的），否则新逻辑会把它们当手动排的、撤不掉。
+
+## 2026-11-24 14:12 清单提醒可以关了（settings.planReminders）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js`：`createPlan()` 参数表加 `planRemindersEnabled = () => true`（L22 附近）；`planTick()` 开头取出 `const remindersOn = planRemindersEnabled()`，把「到点提醒」「超时追问」「今天还没排清单」三处触发都加上 `remindersOn &&` 前置判断（L552、L597 附近）。约 +4 / −3 行。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：`DEFAULT_SPEECH` 加 `planReminders: true`（L1675）；`createPlan({...})` 传 `planRemindersEnabled: () => speechSettings.planReminders !== false`（L2704 附近）。
+- `C:\Users\易千纸\.dsh\guide-tutor\settings.json`：加 `"planReminders": false`（用户本次要求「提醒停掉」）。
+
+**为什么**
+用户从 11-18 起连续几天不回清单确认，系统每半小时问一句「这一项还做吗」，既没效果又烦。原来的代码里只有「每条被提醒过就记 remindedAt」这种逐条去重，没有总开关，关不掉。现在开关放在 settings.json，改一个字段即生效，热重载后马上停。
+
+**怎么验证**
+- `node --check index.js` / `lib/plan.js` 均 exit 0（用 `C:\Users\易千纸\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe`）。
+- 改 `cordis.patch.yml` 的 reload 注释触发热重载，`plugin.log` 出现 `guide-tutor ready` → `overlay ready (pid 42144)`，无报错。
+- `settings.json` 里 `planReminders: false` 已落盘；重载后清单不会再触发「快到点/该开始了/排今天」三种提示。
+
+**怎么恢复**
+把 `settings.json` 里的 `planReminders` 改成 `true`（或删掉这个字段，默认就是 true），然后改一下 `cordis.patch.yml` 的 reload 注释触发重载即可。要回退代码就用 `git revert` 本次提交。
+
+**注意**
+课表提醒（上课前 30 分钟那条）不受这个开关影响，它走 `timetable.reminders.enabled`，需要单独关。
