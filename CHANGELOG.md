@@ -3695,3 +3695,19 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 `git rm docs\插件架构说明.md`；纯文档，无数据影响。
+
+## 2026-11-24 14:40 新增《艾宾浩斯复习卡设计摘要》
+
+**改了什么**
+- 新建 `D:\dsh_TestSpace\guide-tutor\knowledge\艾宾浩斯-复习卡设计摘要.md`（229 行，8317 字节）：把外部 AI 提交的 451 行 `SPEC:guide-review` 摘要化，含遗忘曲线公式与常数、金标表（前 4 轮手算核对）、状态机、review.json 与 plan.json 的数据契约、7 条不变量、派发配额、**3 处我核对出的问题**、2 处可忽略项、6 个待定项与建议顺序。
+
+**为什么**
+用户要求「整理成摘要放进文档，名字跟艾宾浩斯遗忘曲线有关」。这份 spec 的数学部分可用，但有 3 处会落地成 bug，摘要里把「可用」和「要改」分开写，以后照它实现时不会把错误一起抄进去。
+
+**怎么验证**
+- `(Get-Content knowledge\艾宾浩斯-复习卡设计摘要.md).Count` → 229 行。
+- 数学核对：`FACTOR=19/81, DECAY=-0.5` 代入 `t=S` 得 `R=0.9`；`intervalFor(0.9,S)=S`；金标表前 4 轮手算 `S = 1.0152 / 1.7251 / 2.8778`、到期 `1.0352 / 2.7603`，与原文表一致（±0.0001）。
+- 三处问题均有代码依据：级联建卡查 `lib/decompose.js` 的 `cascade`/`syncAncestors`；窗口位置查 `native/overlay.ps1` 的 `card.mode` 分派；题面来源查 `lib/decompose.js` 的 `validateGoal` 只校验 `check` 非空。
+
+**怎么恢复**
+`git rm knowledge\艾宾浩斯-复习卡设计摘要.md`；纯文档，无数据影响。
