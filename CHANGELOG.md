@@ -3679,3 +3679,19 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **注意**
 课表提醒（上课前 30 分钟那条）不受这个开关影响，它走 `timetable.reminders.enabled`，需要单独关。
+
+## 2026-11-24 14:20 新增《插件架构说明》文档
+
+**改了什么**
+- 新建 `D:\dsh_TestSpace\guide-tutor\docs\插件架构说明.md`（374 行，18593 字节）：面向外部 AI 的完整技术说明，含系统边界、进程与通信模型（state.json 下行 / events.jsonl 上行）、两仓库代码结构与行数、工具清单、六类核心数据模型（goals/plan/chores/settings/skill/records）、成功率公式、一次派发调用链、10 条技术约束、9 条技术债、按问题索引的阅读入口。
+
+**为什么**
+用户要把插件介绍发给另一个 AI 分析。原有 `README.md`（91 行）和 `HANDOFF.md`（100 行）是 11-14 写的，只覆盖「截屏 + 标注 + 清单」，不含目标拆解、格数、能力牌、杂务、派发、提醒开关这些后来加的东西。
+
+**怎么验证**
+- `Get-Item docs\插件架构说明.md` → 18593 字节、374 行。
+- 文中行数来自脚本统计（`os.walk` 排除 `.git/tmp/shots/node_modules`），tutor `index.js` 4250 / `lib` 18 个文件 5242 / `overlay.ps1` 6643，coach `index.js` 1253 + `lib` 3179 / `overlay.ps1` 6334。
+- 工具清单用 `Select-String "name: 'guide_"` 从两个仓库的 `index.js` 与 `lib/*.js` 提取，tutor 12 个、coach 7 个。
+
+**怎么恢复**
+`git rm docs\插件架构说明.md`；纯文档，无数据影响。
