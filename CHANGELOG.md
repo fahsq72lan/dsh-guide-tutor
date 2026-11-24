@@ -3786,3 +3786,25 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **怎么恢复**
 `git revert` 本次提交。
+
+## 2026-11-24 18:50 复习本周视图加「按目标 / 上周对比 / 悬停看全部」，月视图补星期表头
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\review-store.js` 的 `weekView()`（约 L195-240）：每天新增 `all: [{title, goalId}]`（不再只留 3 条），新增 `byGoal: [{goalId, count}]`（按目标汇总、降序）与 `prevTotal`（上一周同区间到期数）。
+- `D:\dsh_TestSpace\guide-tutor\index.js` 的 `pushReviewState()`：`week.days[].all` 与 `week.byGoal` 补上 `goalText`（查 `goalMap`），`week.prevTotal` 透传。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1` 周视图：底部新增「上周 N 张 → 本周 M 张（多/少 X 张）」「按目标：学习日语到 N1 2」；标题超过 3 条时显示 `+N（悬停看全部）`，行 `ToolTip` 设为该天全部卡名（一行一张，含目标名）。月视图在日历网格上方补一行「一二三四五六日」表头。
+- 另加 `$script:ReviewWeekOpen`（本轮未启用，见「没做的」）。
+
+**为什么**
+用户问「复习栏中『周』页面的信息是不是展示的太少」——原周视图只有 7 行数字 + 卡名前 3 条，看不到「这周一共多少、比上周多还是少、都是哪个目标的」。
+
+**怎么验证**
+- `node --check lib/review-store.js`、`node --check index.js` 均 exit 0；`overlay.ps1` 用 `[Parser]::ParseInput` 校验 0 错误，BOM 仍是 `239,187,191`。
+- 热重载后打开复习本切到「周」：截图 `tmp/rv-week7.png` 显示「上周 0 张 → 本周 2 张（多 2 张）」「按目标：学习日语到 N1 2」「空着的日子：11-23、11-25、11-27、11-28、11-29」。
+- 切到「月」：截图 `tmp/rv-month2.png` 显示星期表头「一 二 三 四 五 六 日」，24 号蓝框、26 号格内有数字 1。
+
+**怎么恢复**
+`git revert` 本次提交。`review.json` 数据结构没变，回退后旧界面照样能读。
+
+**没做的**
+「点一行展开该天全部卡片」试了两版都没生效（行上绑 `MouseLeftButtonUp` 后点两次无反应，ToolTip 会弹出但 `Rebuild-ReviewPanel` 不执行），改为悬停 ToolTip 显示全部。`$script:ReviewWeekOpen` 留在代码里但没接上，后续要做得先查清行点击事件为什么被吞。

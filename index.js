@@ -2826,10 +2826,17 @@ async function handleEvent(event) {
         doneToday: day.doneToday.map((c) => reviewBrief(c, goalMap)),
       },
       week: {
-        days: week.days,
+        days: week.days.map((d) => ({
+          date: d.date,
+          count: d.count,
+          titles: d.titles,
+          all: (d.all || []).map((c) => ({ ...c, goalText: goalMap[c.goalId] || '' })),
+        })),
         total: week.total,
         done: week.done,
         suggestion: week.suggestion,
+        byGoal: (week.byGoal || []).map((g) => ({ ...g, goalText: goalMap[g.goalId] || '' })),
+        prevTotal: week.prevTotal || 0,
       },
       month: {
         cells: month.cells,

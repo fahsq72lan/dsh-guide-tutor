@@ -2794,6 +2794,7 @@ function Rebuild-ReviewPanel {
         $emptyList = @()
         foreach ($day in $days) {
             $cnt = [int]$day.count
+            $all = @($day.all)
             if ($cnt -gt $peakCount) { $peakCount = $cnt; $peakDate = [string]$day.date }
             if ($cnt -eq 0) { $emptyList += [string]$day.date }
 
@@ -2811,6 +2812,13 @@ function Rebuild-ReviewPanel {
 
             if ([string]$day.date -eq [string]$snap.date) {
                 $row.Background = Get-ReviewBrush 239 232 218
+            }
+            if ($cnt -gt 0) {
+                $tipLines = @($all | ForEach-Object {
+                        $gt = [string]$_.goalText
+                        if ($gt) { [string]$_.title + '  · ' + $gt } else { [string]$_.title }
+                    })
+                $row.ToolTip = ($tipLines -join "`n")
             }
 
             $dw = [System.Windows.Controls.TextBlock]::new()
@@ -2839,17 +2847,31 @@ function Rebuild-ReviewPanel {
             [System.Windows.Controls.Grid]::SetColumn($nm, 2)
             [void]$row.Children.Add($nm)
 
+            $wrap = [System.Windows.Controls.StackPanel]::new()
+            $wrap.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+            $wrap.Margin = [System.Windows.Thickness]::new(6, 0, 0, 0)
+            $wrap.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
             $tt = [System.Windows.Controls.TextBlock]::new()
-            $titles = @($day.titles)
-            if ($titles.Count -gt 0) { $tt.Text = ($titles -join '  ') }
+            if ($all.Count -gt 0) {
+                $show = @($all | Select-Object -First 3 | ForEach-Object { [string]$_.title })
+                $tt.Text = ($show -join '  ')
+            }
             $tt.FontSize = 9.5
             $tt.Foreground = $dim
             $tt.TextWrapping = [System.Windows.TextWrapping]::NoWrap
             $tt.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
-            $tt.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
-            $tt.Margin = [System.Windows.Thickness]::new(6, 0, 0, 0)
-            [System.Windows.Controls.Grid]::SetColumn($tt, 3)
-            [void]$row.Children.Add($tt)
+            $tt.MaxWidth = 180
+            [void]$wrap.Children.Add($tt)
+            if ($all.Count -gt 3) {
+                $more = [System.Windows.Controls.TextBlock]::new()
+                $more.Text = ('  +{0}（悬停看全部）' -f ($all.Count - 3))
+                $more.FontSize = 9.5
+                $more.Foreground = $blue
+                $more.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+                [void]$wrap.Children.Add($more)
+            }
+            [System.Windows.Controls.Grid]::SetColumn($wrap, 3)
+            [void]$row.Children.Add($wrap)
 
             [void]$stack.Children.Add($row)
         }
@@ -2858,11 +2880,21 @@ function Rebuild-ReviewPanel {
 
         $sum = [System.Windows.Controls.TextBlock]::new()
         $sum.Text = ('本周到期 {0} 张 · 已复习 {1} 次' -f [int]$w.total, [int]$w.done)
-        $sum.FontSize = 10
+        $sum.FontSize = 10.5
         $sum.Foreground = $ink
         $sum.Margin = [System.Windows.Thickness]::new(0, 8, 0, 0)
         $sum.FontFamily = [System.Windows.Media.FontFamily]::new('Microsoft YaHei')
         [void]$stack.Children.Add($sum)
+
+        $prev = [int]$w.prevTotal
+        $delta = [int]$w.total - $prev
+        $deltaText = if ($delta -gt 0) { "多 $delta 张" } elseif ($delta -lt 0) { "少 $([math]::Abs($delta)) 张" } else { '持平' }
+        $cmp = [System.Windows.Controls.TextBlock]::new()
+        $cmp.Text = ('上周 {0} 张 → 本周 {1} 张（{2}）' -f $prev, [int]$w.total, $deltaText)
+        $cmp.FontSize = 9.5
+        $cmp.Foreground = $dim
+        $cmp.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+        [void]$stack.Children.Add($cmp)
 
         if ($peakCount -gt 0) {
             $pl = [System.Windows.Controls.TextBlock]::new()
@@ -2880,6 +2912,23 @@ function Rebuild-ReviewPanel {
             $el.TextWrapping = [System.Windows.TextWrapping]::Wrap
             $el.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
             [void]$stack.Children.Add($el)
+        }
+
+        $byGoal = @($w.byGoal)
+        if ($byGoal.Count -gt 0) {
+            $parts = @()
+            foreach ($g in $byGoal) {
+                $name = [string]$g.goalText
+                if ([string]::IsNullOrWhiteSpace($name)) { $name = '未挂目标' }
+                $parts += ('{0} {1}' -f $name, [int]$g.count)
+            }
+            $gl = [System.Windows.Controls.TextBlock]::new()
+            $gl.Text = ('按目标：{0}' -f ($parts -join ' · '))
+            $gl.FontSize = 9.5
+            $gl.Foreground = $dim
+            $gl.TextWrapping = [System.Windows.TextWrapping]::Wrap
+            $gl.Margin = [System.Windows.Thickness]::new(0, 3, 0, 0)
+            [void]$stack.Children.Add($gl)
         }
 
         if (-not [string]::IsNullOrWhiteSpace([string]$w.suggestion)) {
@@ -2932,6 +2981,22 @@ function Rebuild-ReviewPanel {
             }
             $i += 1
         }
+        $dowRow = [System.Windows.Controls.Grid]::new()
+        $dowRow.Margin = [System.Windows.Thickness]::new(0, 0, 0, 4)
+        for ($i = 0; $i -lt 7; $i += 1) {
+            $cd = [System.Windows.Controls.ColumnDefinition]::new()
+            $cd.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+            [void]$dowRow.ColumnDefinitions.Add($cd)
+            $dl = [System.Windows.Controls.TextBlock]::new()
+            $dl.Text = '一二三四五六日'[$i]
+            $dl.FontSize = 9
+            $dl.Foreground = $dim
+            $dl.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
+            [System.Windows.Controls.Grid]::SetColumn($dl, $i)
+            [void]$dowRow.Children.Add($dl)
+        }
+        [void]$stack.Children.Add($dowRow)
+
         [void]$stack.Children.Add($grid)
 
         $sum = [System.Windows.Controls.TextBlock]::new()
@@ -2963,6 +3028,7 @@ function Show-ReviewWindow {
     $script:ReviewView = 'day'
     $script:ReviewCardId = $null
     $script:ReviewFp = ''
+    $script:ReviewWeekOpen = $null
 
     $paper = Get-ReviewBrush 246 241 231
     $paper2 = Get-ReviewBrush 237 230 216
