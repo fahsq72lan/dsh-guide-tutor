@@ -3607,11 +3607,20 @@ async function handleEvent(event) {
         const limit = Number.isFinite(Number(args.limit)) ? Number(args.limit) : cap.targetUnits;
         const maxUnits = Number.isFinite(Number(args.maxUnits)) ? Number(args.maxUnits) : cap.targetUnits;
         const profile = skill.read();
-        const picked = pickNextSteps(goals.active(), { limit, maxUnits });
+        // 给了 id 就只看这个目标；没给就看全部。
+        const pool = String(args.id || '').trim()
+          ? goals.active().filter((g) => g.id === String(args.id).trim())
+          : goals.active();
         const today = plan.forToday(new Date());
         const taken = new Set((today.items || []).map((item) => item.stepId).filter(Boolean));
-        const items = picked
+        // 先多取一些再排除今天已排的，否则排在前面的步骤把配额占满、被 taken 全过滤后就没得派了。
+        const picked = pickNextSteps(pool, {
+          limit: Math.max(limit * 4, 12),
+          maxUnits: Math.max(maxUnits * 4, 12),
+        })
           .filter(({ step }) => !taken.has(step.stepId))
+          .slice(0, limit);
+        const items = picked
           .map(({ goal, milestone, step }) => {
             // 派发前算一次成功率：太低就先别派，说明缺前置能力或该继续拆。
             const win = estimateWin(step, profile);

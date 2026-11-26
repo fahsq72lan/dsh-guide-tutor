@@ -3808,3 +3808,28 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **没做的**
 「点一行展开该天全部卡片」试了两版都没生效（行上绑 `MouseLeftButtonUp` 后点两次无反应，ToolTip 会弹出但 `Rebuild-ReviewPanel` 不执行），改为悬停 ToolTip 显示全部。`$script:ReviewWeekOpen` 留在代码里但没接上，后续要做得先查清行点击事件为什么被吞。
+
+## 2026-11-26 11:22 新增 easylive 项目目标（15 天）+ 修 next 派不出步骤
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\decompose.js:48`：`MAX_STEPS_PER_MILESTONE` 由 8 改为 12（课程类目标天然步数多，6 阶段 × 54 步装不下）。
+- `D:\dsh_TestSpace\guide-tutor\index.js` 的 `guide_goal action=next`（L3604 起）：原先把 `pickNextSteps(goals.active(), {limit, maxUnits})` 的结果直接过滤「今天已排」，排在前面的步骤把配额占满、又被 taken 全过滤后就没得派了（新增 54 步的目标一步都派不出来）。改成先按 4 倍配额多取、排除已排、再截断；同时接入 `args.id`——给了 id 就只看那个目标。
+- 数据结构变更：`C:\Users\易千纸\.dsh\guide-tutor\goals.json` 新增目标 `g2`「15 天做完 easylive 仿 B 站项目（Spring Boot 微服务）」，6 阶段 54 步、共 57.5 格。写入方式是脚本直调 `goals.setMilestones()`（`tmp/apply-easylive.mjs`），因为 54 步的 JSON 通过工具调用传输时被截断（两次报 3–4 个 problems，但同一份数据脚本校验 `problems: 0`）。
+- `C:\Users\易千纸\.dsh\guide-tutor\plan.json` 新增三条：13:00–13:30 看完 P1 项目简介（`g2-m1-s1`）、13:35–14:05 看完 P2 技术栈与架构（`g2-m1-s2`）、14:10–15:10 P3 项目构建（`g2-m1-s3`），都带 `goalId=g2`/`milestoneId=m1`。
+
+**为什么**
+用户要求「根据这个网址设定目标并执行，要求在15天内完成」（BV1aW2NYREFh，54 集、29.3 小时）。建好目标后 `guide_goal next` 返回「没有可派的步骤」，原因是 next 的选择顺序问题，不是数据问题。
+
+**怎么验证**
+- `node --check index.js`、`node --check lib/decompose.js` exit 0。
+- `node tmp/apply-easylive.mjs` 输出 `problems: 0` / `saved: milestones 6 steps 54 units 57.5`。
+- 重载后 `guide_goal action=list` 显示「15 天做完 easylive…0/54 步（0/57.5 格）0%」。
+- `guide_goal action=next id=g2` 返回三步（79%/79%/79%），不再是「没有可派的步骤」。
+- `guide_plan list` 显示今天 11 条，其中 3 条是 g2 的步骤。
+
+**怎么恢复**
+- 代码：`git revert` 本次提交。
+- 数据：删掉 `goals.json` 里的 g2 即可（`guide_goal remove id=g2`，会连带撤清单条目）；`MAX_STEPS_PER_MILESTONE` 改回 8 会让 54 步的目标无法保存。
+
+**单列：数据结构变更**
+`goals.json` 新增 g2（6 阶段 54 步），`plan.json` 新增 3 条带 `stepId` 的条目。删除 g2 时 `dropGoalItems` 会一起撤掉这 3 条。
