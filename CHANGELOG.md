@@ -3858,3 +3858,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **单列：数据结构变更**
 `plan.json` 的每个条目新增 `kind` 字段；`settings.json` 新增 `goalAutoDate`、`choreAutoDate` 两个日期字段。
+
+## 2026-11-26 13:58 清单卡加「歇会」按钮（换 30 分钟娱乐）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js`：`createPlan()` 的返回对象加 `swapInFun`（L1243 附近，原来只在内部用，没暴露）。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：overlay 事件新增 `case 'swap_fun'`（L902 附近，紧跟 `dispatch_goals`）——读 `event.minutes`（默认 30），调 `plan.swapInFun()`，成功写 daylog「换到娱乐：起始-结束，N 条后移」，并 `log('swap fun from overlay: …')`。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：清单卡标题栏「派发」前加「歇会」按钮（L5522 附近，约 +16 行）。粉色字 `FromArgb(200, 255, 180, 200)`，ToolTip「换 30 分钟娱乐：娱乐插到现在，后面整体后移，顺序不乱；想歇更久跟我说一声」，点击 `Send-OverlayEvent @{ type='swap_fun'; minutes=30 }`。
+
+**为什么**
+换到娱乐的功能昨天就做完了，但只有后端——用户得开口跟我说才生效。用户问「所以我想换娱乐模块怎么换」，说明他要的是**自己点得到**。给清单卡加一个按钮，点一下就是 30 分钟版（最常用的那档），要 1 小时/2 小时再说一声。
+
+**怎么验证**
+- `node --check lib/plan.js` / `node --check index.js` exit 0；`overlay.ps1` 用 `[Parser]::ParseInput` 0 错误、BOM 仍是 `efbbbf`。
+- 实机点按钮：`plugin.log` 出现 `swap fun from overlay: 30min -> 14:10-14:40 moved=5`；`plan.json` 变成——`14:10-14:40 娱乐 30 分钟`（新插入）、P3 项目构建 `14:40-15:40`、第 3 课 `16:20-17:05`、第 4 课 `17:15-18:00`、洗澡 `19:30-19:55`、娱乐 `20:35-22:35`。**第 3 课仍在第 4 课前面**，顺序没乱。
+- 验证完已从 `D:\dsh_TestSpace\guide-tutor\tmp\plan.before-swap.json` 恢复今天的清单（10 条，娱乐回到 `20:05-22:05`）。
+
+**怎么恢复**
+`git revert` 本次提交。数据侧：按钮只调 `swapInFun`，不会改代码之外的东西；清单从 `tmp/plan.before-swap.json` 可随时取回。
+
+**已知行为（不是 bug，但要知道）**
+已完成（`done: true`）的条目在 swap 时不参与后移——那是「实际发生」的记录，不该被改。代价是它可能和后移后的未完成条目时间重叠（本次实测：洗衣服 `19:30-20:00` 已完成，洗澡后移到 `19:30-19:55`，两条撞上）。要避免，可以在 swap 前先勾掉或删掉那条已完成的。

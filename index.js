@@ -899,6 +899,23 @@ async function handleEvent(event) {
         })().catch((error) => log(`dispatch goals failed: ${error?.message ?? error}`))
         break
       }
+      case 'swap_fun': {
+        // 清单卡上的「歇会儿」按钮：娱乐插到现在，后面整体后移，顺序不乱。
+        const minutes = Math.round(Number(event.minutes)) || 30
+        const result = plan.swapInFun({ minutes })
+        if (result.ok) {
+          appendDaylog(
+            'activity',
+            `换到娱乐：${result.fun.from}-${result.fun.to}，${result.moved.length} 条后移` +
+              (result.deferred.length ? `，${result.deferred.length} 条顺延到明天` : ''),
+          )
+        }
+        log(
+          `swap fun from overlay: ${minutes}min -> ` +
+            (result.ok ? `${result.fun.from}-${result.fun.to} moved=${result.moved.length}` : result.error),
+        )
+        break
+      }
       case 'quit':
         log('overlay quit requested from the tray menu')
         broadcast('overlay', { running: false, pid: null, ready: false })

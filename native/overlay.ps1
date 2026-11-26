@@ -5524,6 +5524,21 @@ function New-CardWindow {
     $headBtns.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $headBtns.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
+    # 歇会儿：换 30 分钟娱乐，后面整体后移——顺序不乱，代价可见。
+    $funBtn = [System.Windows.Controls.TextBlock]::new()
+    $funBtn.Text = '歇会'
+    $funBtn.FontSize = 10.5
+    $funBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
+    $funBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $funBtn.ToolTip = '换 30 分钟娱乐：娱乐插到现在，后面整体后移，顺序不乱；想歇更久跟我说一声'
+    $funBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(200, 255, 180, 200))
+    $funBtn.Add_PreviewMouseLeftButtonDown({
+        param($s, $e)
+        $e.Handled = $true
+        Send-OverlayEvent @{ type = 'swap_fun'; minutes = 30 }
+    })
+    [void]$headBtns.Children.Add($funBtn)
+
     $dispBtn = [System.Windows.Controls.TextBlock]::new()
     $dispBtn.Text = '派发'
     $dispBtn.FontSize = 10.5
