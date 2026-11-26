@@ -3833,3 +3833,28 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **单列：数据结构变更**
 `goals.json` 新增 g2（6 阶段 54 步），`plan.json` 新增 3 条带 `stepId` 的条目。删除 g2 时 `dropGoalItems` 会一起撤掉这 3 条。
+
+## 2026-11-26 13:45 清单条目分性质 + 「换到娱乐」
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js`：
+  - 新增 `PLAN_KINDS`（task / fun / rest / blank / chore / class）、`KIND_SET`、`REMINDABLE_KINDS`、`normalizeKind()`（约 L36-52）；`readPlanFile()` 与 `add` 分支都带上 `kind`（L139 附近、L757 附近）。
+  - 新增 `clockText(mins)` 与 `swapInFun({ minutes, now })`（L113-215 附近）：把娱乐插到「现在」，从被打断那条起所有未完成条目**整体后移**，溢出 23:00 的整条顺延到明天（写 `plan-later.json`）。
+  - `planTick()` 的到点提醒改成只对 `REMINDABLE_KINDS`（task/chore/class）生效（L574 附近）——娱乐、休息、空白永不提醒。
+  - `guide_plan` 新增 `action=swap`（L1028 附近）与参数 `minutes` / `kind`（schema L1175 附近）。
+- `D:\dsh_TestSpace\guide-tutor\index.js`：`choreAutoDate` / `goalAutoDate` 落盘到 `settings.json`（L4506-4540），插件热重载后不再把「今天已排过」忘掉。
+
+**为什么**
+用户要的是「不想做当前任务时，直接把当前任务和娱乐互换，然后重排」。一开始想把两条互换位置，但单条插队会让第 3 课排到第 4 课后面（用户当场指出）。改成**整体后移**：娱乐插进来，后面的条目按原顺序一起往后推，顺序天然不乱；推不下的顺延到明天，代价如实可见。
+`kind` 是前提——没有「娱乐」这个条目类型，就没有东西可换。
+
+**怎么验证**
+- `node --check lib/plan.js` / `node --check index.js` exit 0。
+- `node tmp/test-swap2.mjs` 输出 `7 passed, 0 failed`：30 分钟版插入 13:35-14:05 且晚上 2 小时娱乐保留并后移；120 分钟版整块提前、不重复；两种情况第 3 课都在第 4 课前面；溢出条目出现在 `plan-later.json`。
+- 实机：今天清单加了一条 `20:00–22:00 娱乐 2 小时`（`kind=fun`）；重载两次后清单稳定在 10 条，不再被自动派发加回第 5、6 课。
+
+**怎么恢复**
+`git revert` 本次提交。数据侧：`plan.json` 里带 `kind` 的条目会退回「有 stepId 就算 task」的推断，不影响使用；`settings.json` 的 `goalAutoDate`/`choreAutoDate` 可以直接删。
+
+**单列：数据结构变更**
+`plan.json` 的每个条目新增 `kind` 字段；`settings.json` 新增 `goalAutoDate`、`choreAutoDate` 两个日期字段。

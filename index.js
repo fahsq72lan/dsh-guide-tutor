@@ -4503,8 +4503,10 @@ async function handleEvent(event) {
       })
       // 排程：每天第一次过 07:30 排两样东西——杂务（琐事）和目标步骤（正事）。
       // 目标按今天的空档算，填到六成，单次最多 10 格；不塞满是为了留缓冲。
-      let choreAutoDate = ''
-      let goalAutoDate = ''
+      // 这两个日期要落到 settings.json 里：插件热重载会丢内存，不然每次重载都当「今天还没排」，
+      // 把用户手工撤掉的课又派回来。
+      let choreAutoDate = String(speechSettings.choreAutoDate || '')
+      let goalAutoDate = String(speechSettings.goalAutoDate || '')
       registerTickHandler(() => {
         try {
           const now = new Date()
@@ -4521,6 +4523,8 @@ async function handleEvent(event) {
           }
           if (choreAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
             choreAutoDate = key
+            speechSettings.choreAutoDate = key
+            saveSpeechSettings()
             const day = choreDay(key)
             if (day.due.length && !day.due.every((c) => day.plannedIds.has(c.id))) {
               log(`chore auto plan start ${key}`)
@@ -4531,6 +4535,8 @@ async function handleEvent(event) {
           }
           if (goalAutoDate !== key && minuteOfDay >= 7 * 60 + 30) {
             goalAutoDate = key
+            speechSettings.goalAutoDate = key
+            saveSpeechSettings()
             log(`goal auto plan start ${key}`)
             void autoPlanGoals({ dateKey: key, now })
               .then((result) => log(`goal auto plan done: ${result.items.length} 步`))
