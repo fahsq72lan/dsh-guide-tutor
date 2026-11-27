@@ -4002,3 +4002,25 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **说明**
 - 原来的 `dropOldFun` 逻辑保留：新歇的时长 ≥ 当天娱乐总长时，仍视为「把整块提前」，删掉旧块避免重复。
 - 缩块只缩尾巴（`to` 提前），开始时间不动，晚上娱乐仍在同一时刻开始。
+
+## 2026-11-27 11:18 日语改成「每天一课」（目标加 dailySteps）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\decompose.js`：
+  - `normalizeGoal()` 新增字段 `dailySteps`（`Number(raw.dailySteps) > 0 ? Math.floor(...) : 0`，0 表示不限）。
+  - `nextSteps(goals, {limit, maxUnits})` 新增按目标计数的 `perGoal` Map，每个目标最多出 `dailySteps` 步（未设则不限）。
+- `C:\Users\易千纸\.dsh\guide-tutor\goals.json`：给 `g4`（学习日语到 N1）加 `"dailySteps": 1`；`g2`（easylive）不加，仍按总配额派。
+
+**为什么**
+用户 2026-11-27 11:15 说「日语每天一课就行，以后都这样」。原来 `nextSteps` 只按全局 `limit`/`maxUnits` 派，日语和项目会互相挤占，一天可能派 3–4 课。
+
+**怎么验证**
+- `node --check lib/decompose.js` exit 0。
+- 脚本直接调 `createGoals` + `nextSteps`：`ACTIVE g4(daily=1), g2(daily=0)`；`NEXT g4: g4-m1-s3`（只 1 步）、`g2: g2-m1-s2..s6`（5 步）。
+- 重启后 `guide_goal next id=g4` 返回「没有可派的步骤」——因为 `g4-m1-s3` 已经在今天清单里，被「已排」过滤掉，符合预期（今天配额已满）。
+
+**怎么恢复**
+删掉 `goals.json` 里那个目标的 `dailySteps` 字段即恢复「不限」；`git revert` 本次提交则移除整个字段支持。
+
+**数据结构变更**
+`goals.json` 的每个目标新增可选字段 `dailySteps`（正整数，缺省 = 不限）。旧数据不用迁移，没有该字段就是旧行为。
