@@ -3879,3 +3879,33 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **已知行为（不是 bug，但要知道）**
 已完成（`done: true`）的条目在 swap 时不参与后移——那是「实际发生」的记录，不该被改。代价是它可能和后移后的未完成条目时间重叠（本次实测：洗衣服 `19:30-20:00` 已完成，洗澡后移到 `19:30-19:55`，两条撞上）。要避免，可以在 swap 前先勾掉或删掉那条已完成的。
+
+## 2026-11-27 10:50 面板加「语音开关」按钮（静音后只留字幕）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - `DEFAULT_SPEECH` 加 `muted: false`（L1746）。
+  - `speakChunk()` 开头加 `if (speechSettings.muted) return silentChunk(text)`（L1897 附近）。
+  - 新增 `silentChunk(text)`（L2000 附近）：不调 TTS，只把字幕推两次（`reveal: 0` 然后 `reveal: 长度`），按 `max(600, 字数×120ms)` 计时后 `playNextChunk()`，保证朗读队列照常前进。
+  - 新增 `setSpeechMuted(muted)`（L1857 附近）：写 `speechSettings.muted`、`saveSpeechSettings()`、`writeState({ speechMuted })`、`broadcast('settings')`，静音时 `stopSpeech()`，日志 `speech muted -> true/false`。
+  - 事件新增 `case 'toggle_mute'`（L735 附近）：`event.muted === undefined` 时取反。
+  - `saveSpeechSettings` 之后补一次 `writeState({ speechMuted })`，开机就把状态同步给浮层。
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - 教学面板 header 在「复习」与「—」之间加 `$script:MuteBtn`（`New-GTextButton '音'`），点击发 `Send-OverlayEvent @{ type='toggle_mute' }`；`if (-not $headerButtons.Children.Contains(...))` 防重复添加。约 +14 行。
+  - `Apply-State()` 开头（L7128 起）读 `$state.speechMuted`：`Child.Text` 切「静 / 音」、`Opacity` 0.45 / 1.0、两套 ToolTip。约 +10 行。
+
+**为什么**
+用户 2026-11-27 10:42 要求「在 ui 界面制作一个能关闭和打开语音提醒功能的按钮」。此前只能改 `settings.json` 或让我调工具，界面上没有入口。
+
+**怎么验证**
+- `node --check index.js` exit 0；`overlay.ps1` 用 `[Parser]::ParseInput`（先 `ReadAllText` + UTF8）校验 0 错误、BOM 仍是 `efbbbf`。
+- 实机点「静」→ `plugin.log` 出现 `speech muted -> true`、`settings.json` 的 `muted=true`、`state.json` 的 `speechMuted=true`、按钮变灰「静」。
+- 再点一次 → `speech muted -> false`、`muted=false`、按钮恢复「音」（截图 `tmp/mute-head4.png` / `tmp/mute-btn-on.png`）。
+
+**怎么恢复**
+`git revert` 本次提交即可回到没有按钮的版本。语音设置只存在 `settings.json` 的 `muted` 字段，删掉该字段就恢复默认（不静音）。
+
+**踩坑**
+- `New-GTextButton` 返回的是 `Border`，文字在 `.Child`（TextBlock）里；第一版写 `$script:MuteBtn.Text = ...` 抛异常被 `catch {}` 吞掉，按钮看着完全没反应。
+- 第一版用 emoji `🔊`/`🔇`，WPF 渲染 `🔇` 时字体缺字形，显示成灰底方块；改成中文单字「音 / 静」。
+- 按钮别离「—」（最小化）太近：两者间距只有约 12 逻辑像素，点偏会收起面板。

@@ -3997,6 +3997,22 @@ function New-PanelWindow {
         })
     [void]$headerButtons.Children.Add($reviewBtn)
 
+    # 喇叭：语音提醒总开关。静音后只有字幕，不起 TTS。
+    if ($null -eq $script:MuteBtn) {
+        $script:MuteBtn = New-GTextButton '音' '语音提醒开关：静音后只有字幕，不出声'
+        $script:MuteBtn.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
+        $script:MuteBtn.Padding = [System.Windows.Thickness]::new(3, 1, 3, 1)
+        $script:MuteBtn.Child.FontSize = 11.0
+        $script:MuteBtn.Add_PreviewMouseLeftButtonUp({
+            param($s, $e)
+            $e.Handled = $true
+            Send-OverlayEvent @{ type = 'toggle_mute' }
+        })
+    }
+    if (-not $headerButtons.Children.Contains($script:MuteBtn)) {
+        [void]$headerButtons.Children.Add($script:MuteBtn)
+    }
+
     # 大小用滑块调（在 footer 下方单独一行），这里不再放按钮。
 
     $collapse = New-GTextButton '—' '收起面板，回到小球' 14.0
@@ -7110,6 +7126,17 @@ function Update-TopBar($state) {
 function Apply-State($state) {
     if ($null -eq $state) { return }
     $script:LastState = $state
+
+    # 喇叭按钮：静音时换成叉、调暗；开回来就恢复。
+    try {
+        if ($null -ne $script:MuteBtn) {
+            $muted = ($state.speechMuted -eq $true)
+            $script:MuteBtn.Child.Text = if ($muted) { '静' } else { '音' }
+            $script:MuteBtn.Opacity = if ($muted) { 0.45 } else { 1.0 }
+            $script:MuteBtn.ToolTip = if ($muted) { '语音已静音：只有字幕不出声，点一下打开' } else { '语音提醒开着，点一下静音' }
+        }
+    }
+    catch { }
 
     # 复习本：数据一变就重画（窗口开着的时候），否则打完一张卡界面还停在旧数字上。
     try {

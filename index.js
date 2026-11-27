@@ -732,6 +732,12 @@ async function handleEvent(event) {
       case 'volume':
         setSpeechVolume(event.value)
         break
+      case 'toggle_mute': {
+        // 面板上的喇叭按钮：静音 / 取消静音。静音时字幕照常走，只是不出声。
+        const next = event.muted === undefined ? !speechSettings.muted : event.muted === true
+        setSpeechMuted(next)
+        break
+      }
       case 'clear_annots': {
         // 用户在面板上点「清」或在托盘菜单里选「清除屏幕标注」：
         // 只把标注清空，面板和悬浮球保持原样（B36：以前这里连 panel.visible 一起
@@ -1743,7 +1749,7 @@ async function handleEvent(event) {
   // Caption size and speaking volume live in the data directory so they survive
   // a restart without touching the profile patch.
   const settingsPath = path.join(dataDir, 'settings.json')
-  const DEFAULT_SPEECH = { subtitleSize: 24, volume: 90, rate: Number(config.speechRate) || 0, planReminders: true }
+  const DEFAULT_SPEECH = { subtitleSize: 24, volume: 90, rate: Number(config.speechRate) || 0, planReminders: true, muted: false }
   let speechSettings = { ...DEFAULT_SPEECH }
   try {
     speechSettings = { ...DEFAULT_SPEECH, ...JSON.parse(fs.readFileSync(settingsPath, 'utf8')) }
@@ -1757,6 +1763,13 @@ async function handleEvent(event) {
     } catch (error) {
       log(`save speech settings failed: ${error?.message ?? error}`)
     }
+  }
+
+  // 喇叭按钮的初始状态：开机就把「是否静音」写进 state，卡片照着画。
+  try {
+    writeState({ speechMuted: speechSettings.muted === true })
+  } catch (error) {
+    log(`seed speechMuted failed: ${error?.message ?? error}`)
   }
 
   // 语音缓存：同一句第二次播放直接读 mp3，不用再起 python 去等 edge。
@@ -1848,6 +1861,16 @@ async function handleEvent(event) {
     return value
   }
 
+  function setSpeechMuted(muted) {
+    speechSettings.muted = Boolean(muted)
+    saveSpeechSettings()
+    writeState({ speechMuted: speechSettings.muted })
+    broadcast('settings', { ...speechSettings })
+    if (speechSettings.muted) stopSpeech()
+    log(`speech muted -> ${speechSettings.muted}`)
+    return speechSettings.muted
+  }
+
   function clampSpeech(text, limit = 220) {
     return String(text ?? '')
       .replace(/\s+/g, ' ')
@@ -1896,6 +1919,8 @@ async function handleEvent(event) {
 
   function speakChunk(text) {
     if (!text || disposed) return null
+    // 静音：不出声也不起 TTS，但字幕照常走——用户关的是声音，不是这条信息。
+    if (speechSettings.muted) return silentChunk(text)
     if (!fs.existsSync(ttsScript)) {
       log(`tts.ps1 missing at ${ttsScript}`)
       return null
@@ -1994,6 +2019,21 @@ async function handleEvent(event) {
     }
     speaking = true
     speakChunk(next)
+  }
+
+  // 静音模式：只推字幕，不起 TTS 进程。停留时长按字数估（约 120ms/字，最短 600ms）。
+  function silentChunk(text) {
+    const seq = ++subtitleSeq
+    const size = speechSettings.subtitleSize
+    writeState({ subtitle: { active: true, text, reveal: 0, seq, size } })
+    writeState({ subtitle: { active: true, text, reveal: String(text).length, seq, size } })
+    later(
+      () => {
+        if (!disposed) playNextChunk()
+      },
+      Math.max(600, String(text).length * 120),
+    )
+    return seq
   }
 
   function speakText(rawText, options = {}) {
