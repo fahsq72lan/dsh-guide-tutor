@@ -3932,3 +3932,26 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **说明**
 `stopSpeech()` 保持原样，仍然用于「新消息打断旧消息」的场景（那种情况本来就该整段作废）。
+
+## 2026-11-27 11:01 语音开关按钮换成扬声器图标
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：
+  - L4002：`New-GTextButton '音'` → `New-GTextButton '🔊'`。
+  - L4005-4006：`Child.FontSize = 12.5`，并显式指定 `Child.FontFamily = 'Segoe UI Emoji'`。
+  - L7135：状态切换 `'静'/'音'` → `'🔇'/'🔊'`。
+
+**为什么**
+用户 2026-11-27 10:58 要求「将静的按钮改成扬声器的图标」。之前第一版就是 emoji，但没指定字体，WPF 用默认字体找不到 `🔇` 字形，回落成灰底方块，才退回中文单字。
+
+**怎么验证**
+- `[Parser]::ParseInput`（ReadAllText + UTF8）0 错误；BOM 仍 `239,187,191`（7530 行）。
+- 重启后截图：静音态是灰色带斜杠的喇叭（`tmp/spk-muted.png`），出声态是白色带声波的喇叭（`tmp/spk-on.png`），**都不再有方块**。
+- 点两次来回切换，`settings.json` 的 `muted` 依次为 `true → false → true`，`plugin.log` 记 `speech muted -> …`。
+
+**怎么恢复**
+`git revert` 本次提交会回到中文单字「音 / 静」版本（那版不会受字体影响）。
+
+**说明**
+- 文件里直接写的是 emoji 字符本身（不是 `\U0001F50A` 转义），因为 PowerShell 5.1 不认 `\U` 转义，写转义会变成字面文本。
+- 若哪天系统缺少 Segoe UI Emoji，图标会回落成方块——那时把 `FontFamily` 那行删掉、改回中文单字即可。

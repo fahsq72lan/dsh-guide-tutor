@@ -3999,10 +3999,11 @@ function New-PanelWindow {
 
     # 喇叭：语音提醒总开关。静音后只有字幕，不起 TTS。
     if ($null -eq $script:MuteBtn) {
-        $script:MuteBtn = New-GTextButton '音' '语音提醒开关：静音后只有字幕，不出声'
+        $script:MuteBtn = New-GTextButton '🔊' '语音提醒开关：静音后只有字幕，不出声'
         $script:MuteBtn.Margin = [System.Windows.Thickness]::new(0, 0, 2, 0)
         $script:MuteBtn.Padding = [System.Windows.Thickness]::new(3, 1, 3, 1)
-        $script:MuteBtn.Child.FontSize = 11.0
+        $script:MuteBtn.Child.FontSize = 12.5
+        $script:MuteBtn.Child.FontFamily = [System.Windows.Media.FontFamily]::new('Segoe UI Emoji')
         $script:MuteBtn.Add_PreviewMouseLeftButtonUp({
             param($s, $e)
             $e.Handled = $true
@@ -7131,7 +7132,7 @@ function Apply-State($state) {
     try {
         if ($null -ne $script:MuteBtn) {
             $muted = ($state.speechMuted -eq $true)
-            $script:MuteBtn.Child.Text = if ($muted) { '静' } else { '音' }
+            $script:MuteBtn.Child.Text = if ($muted) { '🔇' } else { '🔊' }
             $script:MuteBtn.Opacity = if ($muted) { 0.45 } else { 1.0 }
             $script:MuteBtn.ToolTip = if ($muted) { '语音已静音：只有字幕不出声，点一下打开' } else { '语音提醒开着，点一下静音' }
         }
