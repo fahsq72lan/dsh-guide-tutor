@@ -3955,3 +3955,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 **说明**
 - 文件里直接写的是 emoji 字符本身（不是 `\U0001F50A` 转义），因为 PowerShell 5.1 不认 `\U` 转义，写转义会变成字面文本。
 - 若哪天系统缺少 Segoe UI Emoji，图标会回落成方块——那时把 `FontFamily` 那行删掉、改回中文单字即可。
+
+## 2026-11-27 11:10 `guide_plan update` 支持改 kind
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\plan.js` L890 之后新增一行：
+  `if (args.kind !== undefined) item.kind = normalizeKind({ kind: args.kind }, { stepId: item.stepId, choreId: item.choreId })`
+- 约 +2 行。
+
+**为什么**
+用户报「歇会只加 30 分钟，晚上 2 小时娱乐没变化」。查下来晚上那条 `21:05–23:05 娱乐 2 小时`（id `tmwydkres0`）的 `kind` 是 `task`——建的时候没带 kind，于是 `swapInFun()` 的 `funMinutes` 算不到它。想改回来时发现 `guide_plan` 的 schema 里写了 `kind` 参数，但 `update` 分支根本没接这个参数。补齐。
+
+**怎么验证**
+- `node --check lib/plan.js` exit 0。
+- `guide_plan update id=tmwydkres0 kind=fun` → 读 `C:\Users\易千纸\.dsh\guide-tutor\plan.json`，该条 `kind=fun`（从 `task` 变成 `fun`），其余 6 条 kind 未动。
+- `plugin_manager` 禁用再启用重启后生效（`plugin.log` 出现 `guide-tutor ready` / `overlay ready (pid 5584)`）。
+
+**怎么恢复**
+`git revert` 本次提交即可，`kind` 字段本身不动，只是 update 不再能改它。
+
+**注意**
+- `normalizeKind(item, fallback)` 的第一个参数是**对象**（内部读 `item?.kind`），不能直接传字符串 `'fun'`——那样会掉进 fallback 返回 `'task'`。必须传 `{ kind: args.kind }`。
