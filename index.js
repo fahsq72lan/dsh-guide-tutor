@@ -1866,9 +1866,47 @@ async function handleEvent(event) {
     saveSpeechSettings()
     writeState({ speechMuted: speechSettings.muted })
     broadcast('settings', { ...speechSettings })
-    if (speechSettings.muted) stopSpeech()
+    if (speechSettings.muted) muteSpeechKeepSubtitles()
     log(`speech muted -> ${speechSettings.muted}`)
     return speechSettings.muted
+  }
+
+  // 中途静音：把声音掐掉，但别让字幕停在半句上。
+  // 先把当前句补全（用户还没看完），再把剩下的队列用静音路径接着走完。
+  function muteSpeechKeepSubtitles() {
+    if (ttsChild) {
+      try {
+        ttsChild.kill()
+      } catch {
+        /* ignore */
+      }
+      ttsChild = null
+    }
+    speechRun += 1
+    if (currentChunk) {
+      writeState({
+        subtitle: {
+          active: true,
+          text: currentChunk,
+          reveal: currentChunk.length,
+          seq: ++subtitleSeq,
+          size: speechSettings.subtitleSize,
+        },
+      })
+    }
+    const rest = speechQueue.slice()
+    speechQueue = []
+    if (!rest.length) {
+      speaking = false
+      if (currentChunk) scheduleSubtitleClear(subtitleSeq)
+      return
+    }
+    speaking = true
+    speechQueue = rest
+    later(() => {
+      if (disposed || !speechSettings.muted) return
+      playNextChunk()
+    }, 420)
   }
 
   function clampSpeech(text, limit = 220) {
@@ -1890,6 +1928,8 @@ async function handleEvent(event) {
   // 用消息 id 认这一轮，避免把下一轮正常对话也一起静音。
   const mutedSpeakMessages = new Set()
   let speakMutedThisTurn = false
+  // 当前正在播的这一句：中途点静音时，要靠它把半句字幕补全。
+  let currentChunk = ''
 
   function stopSpeech() {
     if (subtitleHideTimer) {
@@ -1919,6 +1959,7 @@ async function handleEvent(event) {
 
   function speakChunk(text) {
     if (!text || disposed) return null
+    currentChunk = String(text)
     // 静音：不出声也不起 TTS，但字幕照常走——用户关的是声音，不是这条信息。
     if (speechSettings.muted) return silentChunk(text)
     if (!fs.existsSync(ttsScript)) {

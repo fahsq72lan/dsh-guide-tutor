@@ -3909,3 +3909,26 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 - `New-GTextButton` 返回的是 `Border`，文字在 `.Child`（TextBlock）里；第一版写 `$script:MuteBtn.Text = ...` 抛异常被 `catch {}` 吞掉，按钮看着完全没反应。
 - 第一版用 emoji `🔊`/`🔇`，WPF 渲染 `🔇` 时字体缺字形，显示成灰底方块；改成中文单字「音 / 静」。
 - 按钮别离「—」（最小化）太近：两者间距只有约 12 逻辑像素，点偏会收起面板。
+
+## 2026-11-27 10:56 修：中途点静音，字幕不再卡在半句
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\index.js`：
+  - 新增模块变量 `currentChunk`（L1891 附近），`speakChunk()` 第一行记录当前句。
+  - 新增 `muteSpeechKeepSubtitles()`（L1874-1910）：掐掉 TTS 进程、`speechRun += 1` 让旧的进度回调失效；把当前句字幕**一次性补全**（`reveal: currentChunk.length`）；再把剩余队列用 `silentChunk` 路径接着走（延迟 420ms 起播，让用户看完当前句）。
+  - `setSpeechMuted()` 里 `if (muted) stopSpeech()` → `if (muted) muteSpeechKeepSubtitles()`（L1869）。约 +40 行。
+
+**为什么**
+用户 2026-11-27 10:51 反馈「点了那个按钮后字幕直接卡住了」。原因是 `stopSpeech()` 会 `speechQueue = []` 并杀掉 TTS，而字幕是靠 TTS 的 progress 事件逐字 reveal 的——进程一死，字幕永远停在中途，队列也没了，后续句子不再出现。
+
+**怎么验证**
+- `node --check index.js` exit 0。
+- 实测：`guide_say` 播 7 句，第 1.67 秒点静音，轮询 `state.json` 的 `subtitle.text` 得到序列——
+  `[5] 春天来了 → [1455] 夏天也来了 → [1670] >>> CLICK → [2535] 秋天跟着来 → [3168] 冬天最后来 → [3999] 一年四季 → [4603] 转了一圈 → [5208] 又回到春天`。
+  即静音后 5 句字幕全部走完，`plugin.log` 同时记 `speech muted -> true`。
+
+**怎么恢复**
+`git revert` 本次提交。静音中途若想放弃后半段字幕，点一下恢复声音即可（420ms 判定期内会跳过剩余队列）。
+
+**说明**
+`stopSpeech()` 保持原样，仍然用于「新消息打断旧消息」的场景（那种情况本来就该整段作废）。
