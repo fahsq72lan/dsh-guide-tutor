@@ -5512,29 +5512,31 @@ function New-CardWindow {
     $colA = [System.Windows.Controls.ColumnDefinition]::new()
     $colA.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
     $colB = [System.Windows.Controls.ColumnDefinition]::new()
-    $colB.Width = [System.Windows.GridLength]::Auto
+    $colB.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $colC = [System.Windows.Controls.ColumnDefinition]::new()
+    $colC.Width = [System.Windows.GridLength]::Auto
     [void]$head.ColumnDefinitions.Add($colA)
     [void]$head.ColumnDefinitions.Add($colB)
+    [void]$head.ColumnDefinitions.Add($colC)
 
-    $headText = [System.Windows.Controls.StackPanel]::new()
-    $headText.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $title = [System.Windows.Controls.TextBlock]::new()
     $title.Text = '今日清单'
     $title.FontSize = 13
     $title.FontWeight = [System.Windows.FontWeights]::SemiBold
     $title.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 255, 255, 255))
+    # 日期单独占中间那列（Star）：右侧按钮一多，日期只在剩余宽度里裁，
+    # 不会像原来放在横向 StackPanel 里那样溢出压到「歇会 / 派发」上。
     $date = [System.Windows.Controls.TextBlock]::new()
     $date.FontSize = 10.5
-    $date.Margin = [System.Windows.Thickness]::new(8, 1, 0, 0)
+    $date.Margin = [System.Windows.Thickness]::new(8, 1, 8, 0)
     $date.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
     $date.TextWrapping = [System.Windows.TextWrapping]::NoWrap
     $date.TextTrimming = [System.Windows.TextTrimming]::CharacterEllipsis
-    $date.MaxWidth = 130
     $date.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(140, 255, 255, 255))
-    [void]$headText.Children.Add($title)
-    [void]$headText.Children.Add($date)
-    [System.Windows.Controls.Grid]::SetColumn($headText, 0)
-    [void]$head.Children.Add($headText)
+    [System.Windows.Controls.Grid]::SetColumn($title, 0)
+    [void]$head.Children.Add($title)
+    [System.Windows.Controls.Grid]::SetColumn($date, 1)
+    [void]$head.Children.Add($date)
 
     # 右侧按钮：模板、⚙ 打开设置、✕ 收起卡片。（「＋ 加一条」已按用户要求去掉）
     $headBtns = [System.Windows.Controls.StackPanel]::new()
@@ -5543,7 +5545,7 @@ function New-CardWindow {
 
     # 歇会儿：换 30 分钟娱乐，后面整体后移——顺序不乱，代价可见。
     $funBtn = [System.Windows.Controls.TextBlock]::new()
-    $funBtn.Text = '歇会'
+    $funBtn.Text = '歇'
     $funBtn.FontSize = 10.5
     $funBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
     $funBtn.Cursor = [System.Windows.Input.Cursors]::Hand
@@ -5557,7 +5559,7 @@ function New-CardWindow {
     [void]$headBtns.Children.Add($funBtn)
 
     $dispBtn = [System.Windows.Controls.TextBlock]::new()
-    $dispBtn.Text = '派发'
+    $dispBtn.Text = '派'
     $dispBtn.FontSize = 10.5
     $dispBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
     $dispBtn.Cursor = [System.Windows.Input.Cursors]::Hand
@@ -5571,7 +5573,7 @@ function New-CardWindow {
     [void]$headBtns.Children.Add($dispBtn)
 
     $tplBtn = [System.Windows.Controls.TextBlock]::new()
-    $tplBtn.Text = '模板'
+    $tplBtn.Text = '模'
     $tplBtn.FontSize = 10.5
     $tplBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
     $tplBtn.Cursor = [System.Windows.Input.Cursors]::Hand
@@ -5610,7 +5612,7 @@ function New-CardWindow {
     })
     [void]$headBtns.Children.Add($close)
 
-    [System.Windows.Controls.Grid]::SetColumn($headBtns, 1)
+    [System.Windows.Controls.Grid]::SetColumn($headBtns, 2)
     [void]$head.Children.Add($headBtns)
 
     $head.Add_MouseLeftButtonDown({
