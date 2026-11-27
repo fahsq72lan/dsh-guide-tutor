@@ -3223,6 +3223,125 @@ function Show-ReviewWindow {
     try { Add-Content -Path $script:LogPath -Value ("[{0:HH:mm:ss.fff}] review window opened" -f (Get-Date)) -Encoding UTF8 } catch { }
 }
 
+function Show-PlanMenu {
+    if ($null -ne $script:PlanMenuWindow) {
+        try { $script:PlanMenuWindow.Close() } catch { }
+        $script:PlanMenuWindow = $null
+    }
+
+    $win = [System.Windows.Window]::new()
+    $win.WindowStyle = [System.Windows.WindowStyle]::None
+    $win.AllowsTransparency = $true
+    $win.Background = [System.Windows.Media.Brushes]::Transparent
+    $win.Width = 216
+    $win.Height = 244
+    $win.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterScreen
+    $win.Topmost = $true
+    $win.ShowInTaskbar = $false
+
+    $card = [System.Windows.Controls.Border]::new()
+    $card.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(255, 28, 32, 40))
+    $card.BorderBrush = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(60, 255, 255, 255))
+    $card.BorderThickness = [System.Windows.Thickness]::new(1)
+    $card.CornerRadius = [System.Windows.CornerRadius]::new(14)
+    $card.Padding = [System.Windows.Thickness]::new(10, 10, 10, 10)
+    $win.Content = $card
+
+    $stack = [System.Windows.Controls.StackPanel]::new()
+    $card.Child = $stack
+
+    $head = [System.Windows.Controls.Grid]::new()
+    $h1 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h1.Width = [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star)
+    $h2 = [System.Windows.Controls.ColumnDefinition]::new()
+    $h2.Width = [System.Windows.GridLength]::new(0, [System.Windows.GridUnitType]::Auto)
+    [void]$head.ColumnDefinitions.Add($h1)
+    [void]$head.ColumnDefinitions.Add($h2)
+
+    $title = [System.Windows.Controls.TextBlock]::new()
+    $title.Text = '清单操作'
+    $title.FontSize = 12
+    $title.FontWeight = [System.Windows.FontWeights]::SemiBold
+    $title.Cursor = [System.Windows.Input.Cursors]::SizeAll
+    $title.ToolTip = '按住这里可以拖动'
+    $title.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(235, 236, 242, 250))
+    $title.Add_MouseLeftButtonDown({
+            param($s, $e)
+            try { $e.Handled = $true; $win.DragMove() } catch { }
+        })
+    [System.Windows.Controls.Grid]::SetColumn($title, 0)
+    [void]$head.Children.Add($title)
+
+    $close = [System.Windows.Controls.TextBlock]::new()
+    $close.Text = '✕'
+    $close.FontSize = 11
+    $close.Cursor = [System.Windows.Input.Cursors]::Hand
+    $close.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
+    $close.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(150, 255, 255, 255))
+    $close.Add_PreviewMouseLeftButtonDown({
+            param($s, $e)
+            $e.Handled = $true
+            try { if ($null -ne $script:PlanMenuWindow) { $script:PlanMenuWindow.Close() } } catch { }
+        })
+    [System.Windows.Controls.Grid]::SetColumn($close, 1)
+    [void]$head.Children.Add($close)
+    [void]$stack.Children.Add($head)
+
+    $sep = [System.Windows.Controls.Border]::new()
+    $sep.Height = 1
+    $sep.Margin = [System.Windows.Thickness]::new(0, 8, 0, 6)
+    $sep.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(40, 255, 255, 255))
+    [void]$stack.Children.Add($sep)
+
+    # 每一项：图标位置留空，只用文字，点完整行都生效。
+    $items = @(
+        @{ Text = '歇 30 分钟'; Hint = '娱乐插到现在，后面整体后移，顺序不乱' },
+        @{ Text = '调整派发格数'; Hint = '多派点填空，少派点留余地' },
+        @{ Text = '清单模板'; Hint = '把某一天存下来，铺到明天/后天' },
+        @{ Text = '设置'; Hint = '透明度、卡片宽度、语气' }
+    )
+
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $idx = $i
+        $row = [System.Windows.Controls.Border]::new()
+        $row.Background = [System.Windows.Media.Brushes]::Transparent
+        $row.CornerRadius = [System.Windows.CornerRadius]::new(8)
+        $row.Padding = [System.Windows.Thickness]::new(8, 7, 8, 7)
+        $row.Margin = [System.Windows.Thickness]::new(0, 1, 0, 1)
+        $row.Cursor = [System.Windows.Input.Cursors]::Hand
+        $row.ToolTip = $items[$i].Hint
+        $row.Tag = $idx
+        $t = [System.Windows.Controls.TextBlock]::new()
+        $t.Text = $items[$i].Text
+        $t.FontSize = 12
+        $t.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(225, 236, 242, 250))
+        $row.Child = $t
+        $row.Add_MouseEnter({ param($s, $e) try { $s.Background = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(38, 255, 255, 255)) } catch { } })
+        $row.Add_MouseLeave({ param($s, $e) try { $s.Background = [System.Windows.Media.Brushes]::Transparent } catch { } })
+        $row.Add_MouseLeftButtonUp({
+                param($s, $e)
+                $e.Handled = $true
+                $pick = [int]$s.Tag
+                try { if ($null -ne $script:PlanMenuWindow) { $script:PlanMenuWindow.Close() } } catch { }
+                switch ($pick) {
+                    0 { Send-OverlayEvent @{ type = 'swap_fun'; minutes = 30 } }
+                    1 { try { Show-DispatchWindow } catch { Write-Log ('dispatch window failed: ' + $_.Exception.Message) } }
+                    2 { try { Show-TemplatesWindow } catch { Write-Log ('templates window failed: ' + $_.Exception.Message) } }
+                    3 { try { Show-SettingsWindow } catch { Write-Log ('settings window failed: ' + $_.Exception.Message) } }
+                }
+            })
+        [void]$stack.Children.Add($row)
+    }
+
+    $win.Add_Closed({
+            param($s, $e)
+            try { $script:PlanMenuWindow = $null } catch { }
+        })
+    $script:PlanMenuWindow = $win
+    [void]$win.Show()
+    Write-Log 'plan menu opened'
+}
+
 function Show-DispatchWindow {
     if ($null -ne $script:DispatchWindow) {
         try { $script:DispatchWindow.Close() } catch { }
@@ -5543,61 +5662,21 @@ function New-CardWindow {
     $headBtns.Orientation = [System.Windows.Controls.Orientation]::Horizontal
     $headBtns.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 
-    # 歇会儿：换 30 分钟娱乐，后面整体后移——顺序不乱，代价可见。
-    $funBtn = [System.Windows.Controls.TextBlock]::new()
-    $funBtn.Text = '歇'
-    $funBtn.FontSize = 10.5
-    $funBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
-    $funBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $funBtn.ToolTip = '换 30 分钟娱乐：娱乐插到现在，后面整体后移，顺序不乱；想歇更久跟我说一声'
-    $funBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(200, 255, 180, 200))
-    $funBtn.Add_PreviewMouseLeftButtonDown({
+    # 标题栏只留「标题 + 状态 + …+ ✕」。歇会 / 派发 / 模板 / 设置全收进「…」，
+    # 以后再加功能也不用往标题栏上挤（之前挤到日期只剩「11-27 …」）。
+    $menuBtn = [System.Windows.Controls.TextBlock]::new()
+    $menuBtn.Text = '…'
+    $menuBtn.FontSize = 15
+    $menuBtn.Margin = [System.Windows.Thickness]::new(0, 0, 14, 0)
+    $menuBtn.Cursor = [System.Windows.Input.Cursors]::Hand
+    $menuBtn.ToolTip = '更多：歇 30 分钟、调整派发格数、清单模板、设置'
+    $menuBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(185, 255, 255, 255))
+    $menuBtn.Add_PreviewMouseLeftButtonDown({
         param($s, $e)
         $e.Handled = $true
-        Send-OverlayEvent @{ type = 'swap_fun'; minutes = 30 }
+        try { Show-PlanMenu } catch { Write-Log ('plan menu failed: ' + $_.Exception.Message) }
     })
-    [void]$headBtns.Children.Add($funBtn)
-
-    $dispBtn = [System.Windows.Controls.TextBlock]::new()
-    $dispBtn.Text = '派'
-    $dispBtn.FontSize = 10.5
-    $dispBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
-    $dispBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $dispBtn.ToolTip = '调整今天派多少任务：多派点填空，少派点留余地'
-    $dispBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
-    $dispBtn.Add_PreviewMouseLeftButtonDown({
-        param($s, $e)
-        $e.Handled = $true
-        try { Show-DispatchWindow } catch { Write-Log ('dispatch window failed: ' + $_.Exception.Message) }
-    })
-    [void]$headBtns.Children.Add($dispBtn)
-
-    $tplBtn = [System.Windows.Controls.TextBlock]::new()
-    $tplBtn.Text = '模'
-    $tplBtn.FontSize = 10.5
-    $tplBtn.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
-    $tplBtn.Cursor = [System.Windows.Input.Cursors]::Hand
-    $tplBtn.ToolTip = '清单模板：把某一天存下来，铺到明天/后天'
-    $tplBtn.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
-    $tplBtn.Add_PreviewMouseLeftButtonDown({
-        param($s, $e)
-        $e.Handled = $true
-        try { Show-TemplatesWindow } catch { Write-Log ('templates window failed: ' + $_.Exception.Message) }
-    })
-    [void]$headBtns.Children.Add($tplBtn)
-    $gear = [System.Windows.Controls.TextBlock]::new()
-    $gear.Text = '⚙'
-    $gear.FontSize = 14
-    $gear.Margin = [System.Windows.Thickness]::new(0, 0, 12, 0)
-    $gear.Cursor = [System.Windows.Input.Cursors]::Hand
-    $gear.ToolTip = '设置：清单透明度、宽度，面板透明度、大小，语气'
-    $gear.Foreground = [System.Windows.Media.SolidColorBrush]::new([System.Windows.Media.Color]::FromArgb(160, 255, 255, 255))
-    $gear.Add_PreviewMouseLeftButtonDown({
-        param($s, $e)
-        $e.Handled = $true
-        try { Show-SettingsWindow } catch { Write-Log ('settings window failed: ' + $_.Exception.Message) }
-    })
-    [void]$headBtns.Children.Add($gear)
+    [void]$headBtns.Children.Add($menuBtn)
 
     $close = [System.Windows.Controls.TextBlock]::new()
     $close.Text = '✕'
