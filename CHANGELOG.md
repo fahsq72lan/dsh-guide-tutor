@@ -4024,3 +4024,24 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **数据结构变更**
 `goals.json` 的每个目标新增可选字段 `dailySteps`（正整数，缺省 = 不限）。旧数据不用迁移，没有该字段就是旧行为。
+
+## 2026-11-27 11:24 新增蓝桥杯目标（2027 省赛），目标支持 due 截止日
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\lib\decompose.js`：`normalizeGoal()` 新增 `due` 字段（`str(raw.due, 20)`，空串表示无期限），+2 行。
+- `C:\Users\易千纸\.dsh\guide-tutor\goals.json`：新增目标 `g3`「挑战蓝桥杯（2027 省赛冲省一）」，带 `acceptance`、`due: "2027-04-10"`、`dailySteps: 1`、5 阶段 20 步（共 40 格）。写入前文件由脚本读取后整体重写（保持原有 g4/g2 不变）。
+- 拆解数据来源 `D:\dsh_TestSpace\guide-tutor\tmp\lqb-milestones.json`，应用脚本 `tmp\apply-lqb.mjs`（走 `goals.setMilestones()`，先 dry run 校验 `problems: 0` 再 `--apply`）。
+
+**为什么**
+用户 2026-11-27 11:18 说「加入新目标，我要挑战蓝桥杯。你去查一下蓝桥的开考时间，设定为deadline」。查证第十八届蓝桥杯软件赛省赛为 **2027 年 4 月 10 日（周六）9:00—13:00**，据此设 due。拆解路线照搬视频《2026蓝桥杯知识点速通》的奖项档位：省三=枚举模拟、省一=贪心/二分/STL/排序/暴力、国三=DFS/BFS/简单 DP/简单数论、国一=进阶 DP/图论/数据结构。
+
+**怎么验证**
+- `node --check lib/decompose.js` exit 0。
+- `node tmp/apply-lqb.mjs` 输出 `problems: 0`；`--apply` 后输出 `saved: milestones 5 steps 20 units 40`。
+- 读回校验：`due= 2027-04-10 daily= 1 steps= 20 units= 40`，`挑战蓝桥杯（2027 省赛冲省一）：0/20 步（0/40 格） 0%`。
+
+**怎么恢复**
+删掉 `goals.json` 里 id 为 `g3` 的那条即移除该目标；`due`/`dailySteps` 都是可选字段，旧数据不受影响。
+
+**数据结构变更**
+`goals.json` 每条目标新增可选字段 `due`（`YYYY-MM-DD` 字符串，空 = 无期限）。目前只存不用——派发逻辑还没按截止日加速。
