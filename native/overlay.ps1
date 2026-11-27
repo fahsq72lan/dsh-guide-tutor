@@ -7152,6 +7152,21 @@ function Apply-State($state) {
     }
     catch { }
 
+    # 杂务卡：加 / 删 / 改名后不用重开窗口也要立刻看到（数据指纹变了就重画）。
+    try {
+        if ($null -ne $state.chores -and $null -ne $script:GoalsWindow -and $script:GoalsWindow.IsVisible) {
+            $ch = $state.chores
+            $chIds = (@($ch.items) | ForEach-Object { [string]$_.id }) -join ','
+            $chFp = '{0}|{1}|{2}|{3}' -f [string]$ch.date, [int]$ch.total, [int]$ch.done, $chIds
+            if ($chFp -ne $script:ChoreFp) {
+                $script:ChoreFp = $chFp
+                # 正在改名的时候不重画，否则输入框会被打断。
+                if ($null -eq $script:EditingChore) { Rebuild-GoalsPanel }
+            }
+        }
+    }
+    catch { }
+
     $panel = $state.panel
     if ($null -eq $panel) { return }
 

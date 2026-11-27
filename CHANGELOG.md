@@ -4045,3 +4045,22 @@ xlsx 备份：`tmp\打磨计划-2026-11.xlsx.bak-20261113`；md 用 `git checkou
 
 **数据结构变更**
 `goals.json` 每条目标新增可选字段 `due`（`YYYY-MM-DD` 字符串，空 = 无期限）。目前只存不用——派发逻辑还没按截止日加速。
+
+## 2026-11-27 11:27 修：杂务加 / 删 / 改名后卡片不刷新（看起来像按钮没反应）
+
+**改了什么**
+- `D:\dsh_TestSpace\guide-tutor\native\overlay.ps1`：`Apply-State()` 里（复习本那段之后、`$panel = $state.panel` 之前）新增 16 行——当 `$state.chores` 的指纹（`date|total|done|ids`）变化、且目标窗口正在显示时调 `Rebuild-GoalsPanel`；`$script:EditingChore` 非空时跳过，避免打断改名输入框。文件 7529 → 7545 行。
+
+**为什么**
+用户 2026-11-27 11:24 反馈「杂务的按钮没有作用」。实测发现按钮**是有效的**——`chores.json` 里已经多出 5 条「新杂务」（c4–c8），`plugin.log` 有 `chore added: c4…c8`。真正的问题是：目标窗口的杂务卡只在打开窗口时读一次 `state.chores`，之后后台更新了也不会重画，用户看到 0/2 不变就以为没加上。之前这条在 CHANGELOG 里被记为「已知小毛病」，这次修掉。
+
+**怎么验证**
+- `[Parser]::ParseInput` 0 错误；BOM 仍 `239,187,191`（7545 行）。
+- 重启后打开目标窗口，点「＋」：`plugin.log` 记 `chore added: c4 新杂务`，截图 `tmp/gw-after-add.png` 显示卡片**立刻**从 `0/2` 变 `0/3` 并出现「新杂务」行，不需要关窗重开。
+- 测试产生的 c4 已从 `chores.json` 删除；用户原有 c1 洗衣服 / c2 洗澡 / c3 倒垃圾 未动。
+
+**怎么恢复**
+`git revert` 本次提交即回到「加完要重开窗口才看到」的旧行为，不影响数据。
+
+**顺带清理**
+测试期间 `chores.json` 累积了 5 条「新杂务」（c4–c8，其中 c4–c7 是我和用户点击测试产生的），已全部删除，只留 c1/c2/c3。
